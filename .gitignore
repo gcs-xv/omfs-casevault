@@ -1,0 +1,15 @@
+.env
+.venv/
+credentials.json
+token.json
+*.db
+*.db-shm
+*.db-wal
+data/*
+!data/.gitkeep
+cache/*
+!cache/.gitkeep
+work/
+__pycache__/
+.pytest_cache/
+*.pyc

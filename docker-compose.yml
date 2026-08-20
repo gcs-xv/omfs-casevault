@@ -1,0 +1,7 @@
+services:
+  casevault:
+    build: .
+    env_file: .env
+    ports: ["8000:8000", "8501:8501"]
+    volumes: ["./data:/app/data"]
+

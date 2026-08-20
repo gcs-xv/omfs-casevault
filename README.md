@@ -71,7 +71,7 @@ streamlit run frontend/app.py
 pytest -q
 ```
 
-The suite covers Roman numerals, RM normalization, the full Awan Darmawan acceptance SOAP, sections, date, vitals, residents, DPJP credentials, POD conflict warnings, partial SOAP behavior, patient reuse, persistence, and duplicate visits.
+The repository test suite uses synthetic, non-identifying fixtures. The complete clinical-format acceptance fixture is intentionally kept out of GitHub.
 
 ## Backup, restore, and export
 

@@ -1,0 +1,16 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+streamlit==1.48.1
+SQLAlchemy==2.0.43
+alembic==1.16.5
+pydantic-settings==2.10.1
+python-multipart==0.0.20
+httpx==0.28.1
+Authlib==1.6.3
+itsdangerous==2.2.0
+google-api-python-client==2.179.0
+google-auth==2.40.3
+google-auth-oauthlib==1.2.2
+Pillow==11.3.0
+pytest==8.4.1
+
