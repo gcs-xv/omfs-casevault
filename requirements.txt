@@ -11,6 +11,6 @@ itsdangerous==2.2.0
 google-api-python-client==2.179.0
 google-auth==2.40.3
 google-auth-oauthlib==1.2.2
+cryptography==45.0.6
 Pillow==11.3.0
 pytest==8.4.1
-
