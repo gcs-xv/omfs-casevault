@@ -288,7 +288,7 @@ html,body,[class*="css"]{font-family:Inter,-apple-system,BlinkMacSystemFont,"Seg
 .cv-steps{position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin:.2rem 0 1.35rem;border:1px solid var(--atlas-rule);background:var(--atlas-paper)}.cv-step{position:relative;display:flex;align-items:center;gap:.75rem;padding:.85rem 1rem;color:#768084;border-right:1px solid var(--atlas-rule);font-size:.78rem;letter-spacing:.04em;text-transform:uppercase}.cv-step:last-child{border-right:0}.cv-step b{font-family:Georgia,"Times New Roman",serif;font-size:1.2rem;font-weight:500;color:#a1a29d}.cv-step.active{color:var(--atlas-ink);background:#edf3f3}.cv-step.active:after{content:"";position:absolute;inset:auto 0 -1px;height:3px;background:var(--atlas-coral)}.cv-step.active b{color:var(--atlas-coral)}.cv-step.done{background:#f7f4ed;color:#59686b}.cv-step.done b{color:var(--atlas-blue)}
 .cv-note{position:relative;overflow:hidden;background:var(--atlas-navy);border-left:5px solid var(--atlas-coral);padding:1.55rem 1.45rem;color:#eae7df;min-height:220px;box-shadow:9px 12px 0 #d8d1c3}.cv-note:after{content:"01";position:absolute;right:-.15rem;bottom:-2.2rem;font-family:Georgia,"Times New Roman",serif;font-size:8rem;color:#fff;opacity:.035}.cv-note .num{font-size:.6rem;letter-spacing:.2em;text-transform:uppercase;color:#91bac7}.cv-note h3{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:1.5rem;color:#fff;margin:.65rem 0}.cv-note p{color:#b9c6c8;font-size:.88rem;line-height:1.5}.cv-note ul{padding-left:1.05rem;color:#d9dcd7;font-size:.8rem;line-height:1.7}
 .cv-avatar{width:46px;height:46px;border:1px solid #9fb4b8;background:#e5eded;color:var(--atlas-blue);display:grid;place-items:center;font-family:Georgia,"Times New Roman",serif;font-weight:700;letter-spacing:.04em}.cv-meta{color:var(--atlas-muted);font-size:.78rem;line-height:1.45;margin-top:.22rem}.cv-pill{display:inline-block;padding:.21rem .48rem;border:1px solid #b8c7c7;background:transparent;color:#47666e;font-size:.59rem;font-weight:750;letter-spacing:.075em;text-transform:uppercase;margin:.18rem .25rem .08rem 0}.cv-empty{text-align:center;padding:3.4rem 1rem;background:var(--atlas-paper);border:1px dashed #aaa89f;color:var(--atlas-muted)}.cv-empty .icon{font-family:Georgia,"Times New Roman",serif;font-size:2.4rem;color:var(--atlas-blue);margin-bottom:.6rem}.cv-section-title{font-family:Georgia,"Times New Roman",serif;font-size:1.22rem;color:var(--atlas-ink);margin:.15rem 0 .2rem}.cv-section-sub{color:var(--atlas-muted);font-size:.78rem;line-height:1.5;margin-bottom:.9rem}
-.cv-record-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem;margin:.15rem 0 .55rem}.cv-record-fact{min-height:66px;padding:.62rem .7rem;background:#f7f4ed;border:1px solid #d7d1c5}.cv-record-fact b{display:block;color:#698087;font-size:.55rem;letter-spacing:.13em;text-transform:uppercase;margin-bottom:.3rem}.cv-record-fact span{display:block;color:#263b44;font-size:.78rem;line-height:1.35;max-height:3.25em;overflow:auto}.cv-soap-scroll{height:min(43vh,390px);min-height:240px;overflow:auto;padding:1rem 1.05rem;background:#f8f6f0;border:1px solid #d4cec2;color:#263b44;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;line-height:1.55;white-space:pre-wrap}.cv-viewer-note{font-size:.7rem;color:var(--atlas-muted);margin:.25rem 0 .7rem}.cv-photo-name{font-family:Georgia,"Times New Roman",serif;font-size:1rem;color:var(--atlas-ink);overflow-wrap:anywhere}[data-testid="stImage"] img{max-height:52vh;object-fit:contain;background:#eef1ef}
+.cv-record-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem;margin:.15rem 0 .75rem}.cv-record-fact{min-height:66px;padding:.62rem .7rem;background:#f7f4ed;border:1px solid #d7d1c5}.cv-record-fact b{display:block;color:#698087;font-size:.55rem;letter-spacing:.13em;text-transform:uppercase;margin-bottom:.3rem}.cv-record-fact span{display:block;color:#263b44;font-size:.78rem;line-height:1.35;max-height:3.25em;overflow:auto}.cv-soap-scroll{height:min(46vh,430px);min-height:260px;overflow:auto;padding:1rem 1.05rem;background:#f8f6f0;border:1px solid #d4cec2;color:#263b44;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;line-height:1.55;white-space:pre-wrap}.cv-viewer-note{font-size:.7rem;color:var(--atlas-muted);margin:.25rem 0 .7rem}.cv-photo-name{font-family:Georgia,"Times New Roman",serif;font-size:.82rem;color:var(--atlas-ink);overflow-wrap:anywhere;margin:.25rem 0}[data-testid="stImage"] img{max-height:34vh;object-fit:contain;background:#eef1ef}
 .cv-profile{display:flex;align-items:center;gap:1rem;padding:.35rem 0 .75rem}.cv-profile .cv-avatar{width:62px;height:62px;font-size:1.16rem}.cv-profile h2{font-family:Georgia,"Times New Roman",serif;font-weight:500;margin:0;font-size:1.65rem}.cv-episode-head{display:flex;align-items:center;gap:1rem;padding:.2rem 0 .7rem}.cv-case-no{min-width:56px;font-family:Georgia,"Times New Roman",serif;font-size:2.35rem;line-height:1;color:var(--atlas-coral);border-right:1px solid var(--atlas-rule);padding-right:.8rem}.cv-episode-title{font-family:Georgia,"Times New Roman",serif;font-size:1.22rem;font-weight:500;color:var(--atlas-ink)}.cv-episode-meta{font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;color:var(--atlas-muted);margin-top:.28rem}.cv-visit{position:relative;border-left:1px solid var(--atlas-blue);padding:.15rem 0 .15rem 1.25rem;margin:.65rem 0 1.1rem}.cv-visit:before{content:"";position:absolute;left:-5px;top:.45rem;width:9px;height:9px;border:2px solid var(--atlas-paper);background:var(--atlas-coral);box-shadow:0 0 0 1px var(--atlas-coral)}.cv-visit-title{font-family:Georgia,"Times New Roman",serif;font-size:1.02rem;color:var(--atlas-ink)}.cv-field{margin:.58rem 0}.cv-field b{display:block;color:#698087;font-size:.57rem;letter-spacing:.14em;text-transform:uppercase;margin-bottom:.18rem}.cv-field span{color:#263b44;font-size:.82rem;line-height:1.48}.cv-card-folio{color:var(--atlas-coral);font-family:Georgia,"Times New Roman",serif;font-size:.66rem;letter-spacing:.13em;text-transform:uppercase;border-bottom:1px solid #d8d2c6;padding-bottom:.45rem;margin-bottom:.75rem}
 [data-testid="stVerticalBlockBorderWrapper"]{background:rgba(255,253,248,.94);border-color:#cdc7ba!important;border-radius:2px!important;box-shadow:2px 3px 0 #d9d2c5;transition:transform .18s ease,border-color .18s ease}[data-testid="stVerticalBlockBorderWrapper"]:hover{border-color:#9d9a92!important}
 [data-baseweb="input"]>div,[data-baseweb="textarea"]>div,[data-baseweb="select"]>div{border-color:#bdb9ae!important;border-radius:2px!important;background:#fffefb!important;box-shadow:none!important}input,textarea{color:var(--atlas-ink)!important}input:focus,textarea:focus{caret-color:var(--atlas-coral)}
@@ -350,42 +350,34 @@ def render_visit_contents(drive,visit_folder:dict,row:dict|None,key_prefix:str):
         photos=[item for item in files if str(item.get("mimeType","")).startswith("image/")]
     except Exception as exc:
         st.warning(f"Record files could not be loaded: {exc}");return
-    overview_tab,soap_tab,photos_tab=st.tabs(["OVERVIEW","SOAP REPORT",f"PHOTOS · {len(photos)}"])
-    with overview_tab:
+    soap_tab,photos_tab=st.tabs(["SOAP REPORT",f"PHOTOS · {len(photos)}"])
+    with soap_tab:
         facts=[("Procedure",row.get("procedures",[])),("Diagnosis",row.get("diagnoses",[])),("DPJP",roles.get("dpjp")),("Operator",roles.get("operator")),("Assistant operator",roles.get("assistant_operators",[])),("Archive folder",visit_folder.get("name"))]
         cards=[]
         for label,value in facts:
             values=compact_values(value if isinstance(value,list) else [value])
             if values:cards.append(f'<div class="cv-record-fact"><b>{escape(label)}</b><span>{escape(" · ".join(values))}</span></div>')
         if cards:st.markdown(f'<div class="cv-record-grid">{"".join(cards)}</div>',unsafe_allow_html=True)
-        else:st.caption("No indexed clinical summary is available for this legacy record.")
-    with soap_tab:
-        soap_data=row.get("soap") or {};section_values=[("S · SUBJECTIVE",soap_data.get("subjective")),("O · OBJECTIVE",soap_data.get("objective_raw")),("A · ASSESSMENT",soap_data.get("assessment")),("P · PLAN",soap_data.get("plan")),("ORIGINAL",soap)]
-        available=[(label,value) for label,value in section_values if value]
-        if available:
-            section_tabs=st.tabs([label for label,_ in available])
-            for tab,(label,value) in zip(section_tabs,available):
-                with tab:st.markdown(f'<div class="cv-soap-scroll">{escape(str(value))}</div>',unsafe_allow_html=True)
-            st.download_button("DOWNLOAD SOAP",soap or "\n\n".join(f"{label}\n{value}" for label,value in available),file_name="SOAP.txt",mime="text/plain",key=f"soap_download_{key_prefix}")
+        if soap:
+            st.markdown(f'<div class="cv-soap-scroll">{escape(soap)}</div>',unsafe_allow_html=True)
+            st.download_button("DOWNLOAD SOAP",soap,file_name="SOAP.txt",mime="text/plain",key=f"soap_download_{key_prefix}")
         else:st.caption("SOAP.txt was not found in this legacy visit folder.")
     with photos_tab:
         if not photos:
             st.caption("No image files found in this visit folder.")
         else:
-            selected=st.selectbox("Clinical image",photos,format_func=lambda item:item.get("name") or "Clinical photo",key=f"photo_select_{key_prefix}",label_visibility="collapsed")
-            st.markdown('<div class="cv-viewer-note">One image is loaded at a time to keep the record fast and compact.</div>',unsafe_allow_html=True)
-            show=st.toggle("LOAD SELECTED IMAGE",key=f"show_photos_{key_prefix}",help="The selected photo is downloaded privately from Drive only when enabled.")
+            show=st.toggle("LOAD ALL PHOTOS",key=f"show_photos_{key_prefix}",help="All clinical photos are downloaded privately from Drive only when enabled.")
             if show:
-                try:
-                    data=download_drive_bytes(drive,selected["id"])
-                    image_col,action_col=st.columns([3.3,1],gap="medium")
-                    with image_col:st.image(data,use_container_width=True)
-                    with action_col:
-                        st.markdown(f'<div class="cv-photo-name">{escape(selected.get("name") or "Clinical photo")}</div>',unsafe_allow_html=True)
-                        st.caption(selected.get("mimeType") or "Clinical image")
-                        st.download_button("DOWNLOAD",data,file_name=selected.get("name") or "clinical-photo.jpg",mime=selected.get("mimeType") or "application/octet-stream",key=f"photo_download_{key_prefix}_{selected['id']}",use_container_width=True)
-                        if selected.get("webViewLink"):st.link_button("OPEN IN DRIVE  ↗",selected["webViewLink"],use_container_width=True)
-                except Exception as exc:st.warning(f"{selected.get('name','Photo')}: {exc}")
+                grid=st.columns(3,gap="small")
+                for index,item in enumerate(photos):
+                    with grid[index%3]:
+                        try:
+                            data=download_drive_bytes(drive,item["id"])
+                            st.image(data,use_container_width=True)
+                            st.markdown(f'<div class="cv-photo-name">{escape(item.get("name") or "Clinical photo")}</div>',unsafe_allow_html=True)
+                            st.download_button("DOWNLOAD",data,file_name=item.get("name") or f"clinical-photo-{index+1}.jpg",mime=item.get("mimeType") or "application/octet-stream",key=f"photo_download_{key_prefix}_{item['id']}",use_container_width=True)
+                            if item.get("webViewLink"):st.link_button("OPEN IN DRIVE  ↗",item["webViewLink"],use_container_width=True)
+                        except Exception as exc:st.warning(f"{item.get('name','Photo')}: {exc}")
 
 def api(method,path,**kwargs):
     try:
