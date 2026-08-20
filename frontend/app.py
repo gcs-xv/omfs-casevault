@@ -31,7 +31,12 @@ if EMBEDDED_MODE:
     from backend.services.drive_catalog import patient_from_folder,search_catalog
     from backend.services.drive_service import DriveService
     from backend.services.soap_parser import parse_soap
-    from backend.utils.normalization import clinical_photo_name,normalize_rm
+    from backend.utils import normalization as normalization_utils
+    if not hasattr(normalization_utils,"clinical_photo_name"):
+        from importlib import reload
+        normalization_utils=reload(normalization_utils)
+    clinical_photo_name=normalization_utils.clinical_photo_name
+    normalize_rm=normalization_utils.normalize_rm
 
 API=os.getenv("API_URL","http://127.0.0.1:8000")
 APP_URL="https://omfs-casevault-dj7trsufq6jykaeuddo7b4.streamlit.app/"
