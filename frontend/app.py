@@ -308,6 +308,7 @@ def compact_values(values)->list[str]:
     """Keep optional clinical fields concise and omit empty/duplicate values."""
     seen=set();result=[]
     for value in values or []:
+        if value is None:continue
         value=str(value).strip()
         if value and value.casefold() not in seen:
             seen.add(value.casefold());result.append(value)
@@ -514,13 +515,19 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
     rows=patient_metadata(metadata_rows,patient);rich_patient=(rows[0].get("patient") if rows else {}) or {}
     name=rich_patient.get("full_name") or patient.get("name") or "Patient"
     rm=rich_patient.get("medical_record_number") or patient.get("rm") or "—"
+    title=rich_patient.get("title") or patient.get("title")
+    sex=rich_patient.get("sex") or patient.get("sex")
+    age=rich_patient.get("age") if rich_patient.get("age") is not None else patient.get("age")
+    age_unit=rich_patient.get("age_unit") or patient.get("age_unit") or "Tahun"
+    insurance=rich_patient.get("insurance") or patient.get("insurance")
+    hospital=rich_patient.get("hospital") or patient.get("hospital")
     page_header(f"Patient dossier · RM {escape(rm)}",escape(name),"A longitudinal surgical record of episodes, visits, diagnoses, procedures, and operative teams.")
     with st.container(border=True):
         left,right=st.columns([4,1])
-        left.markdown(f'<div class="cv-profile"><div class="cv-avatar">{initials(name)}</div><div><h2>{escape(name)}</h2><div class="cv-meta">RM {escape(rm)} · {escape(rich_patient.get("hospital") or patient.get("hospital") or "Hospital not recorded")}</div></div></div>',unsafe_allow_html=True)
+        left.markdown(f'<div class="cv-profile"><div class="cv-avatar">{initials(name)}</div><div><h2>{escape(name)}</h2><div class="cv-meta">Patient identity</div></div></div>',unsafe_allow_html=True)
         if patient.get("drive_url"):right.link_button("OPEN PATIENT DRIVE  ↗",patient["drive_url"],use_container_width=True)
-        chips=compact_values([rich_patient.get("title"),rich_patient.get("sex") or patient.get("sex"),f"{rich_patient.get('age')} {rich_patient.get('age_unit') or 'Tahun'}" if rich_patient.get("age") else None,rich_patient.get("insurance")])
-        if chips:st.markdown("".join(f'<span class="cv-pill">{escape(x)}</span>' for x in chips),unsafe_allow_html=True)
+        details=[("Title",title),("Gender",sex),("Age",f"{age} {age_unit}" if age is not None else None),("Insurance",insurance),("Hospital",hospital),("RM",rm)]
+        st.markdown("".join(f'<span class="cv-pill"><b>{escape(label)}</b> · {escape(str(value))}</span>' for label,value in details if value),unsafe_allow_html=True)
 
     try:
         drive=drive_service();episodes=sorted(list_drive_folders(drive,patient["id"]),key=episode_sort_key)
@@ -553,8 +560,9 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
                 row=next((x for x in episode_rows if x.get("visit_folder_id")==visit_folder.get("id")),None)
                 visit=(row or {}).get("visit",{});roles=(row or {}).get("roles",{})
                 phase=visit.get("visit_phase");pod=visit.get("pod_roman") or visit.get("pod_number")
-                visit_title=" · ".join(compact_values([visit.get("visit_date"),f"POD {pod}" if phase=="POD" and pod is not None else phase])) or visit_folder.get("name") or "Visit"
-                with st.expander(f"{visit_title}  ·  Open record"):
+                visit_title=" - ".join(compact_values([visit.get("visit_date"),f"POD {pod}" if phase=="POD" and pod is not None else phase]))
+                if not visit_title:visit_title=visit_folder.get("name") or "Visit"
+                with st.expander(f"{visit_title} - Open record"):
                     title_col,visit_link=st.columns([4,1]);title_col.markdown(f'<div class="cv-meta">Drive folder · {escape(visit_folder.get("name") or "Visit")}</div>',unsafe_allow_html=True)
                     if visit_folder.get("webViewLink"):visit_link.link_button("OPEN VISIT  ↗",visit_folder["webViewLink"],use_container_width=True)
                     render_visit_contents(drive,visit_folder,row,f"{episode_folder['id']}_{visit_folder['id']}")
