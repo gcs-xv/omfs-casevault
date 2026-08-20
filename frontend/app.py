@@ -236,38 +236,42 @@ def save_visit_to_drive(data:dict,photos:list)->dict:
 
 finish_google_login()
 restore_google_session()
-st.set_page_config(page_title="OMFS CaseVault",page_icon="🗂️",layout="wide",initial_sidebar_state="expanded")
+st.set_page_config(page_title="OMFS CaseVault · Surgical Case Atlas",page_icon="🦷",layout="wide",initial_sidebar_state="auto")
 if st.query_params.get("session_token"):
     st.session_state.api_session_token=st.query_params["session_token"]
     st.query_params.clear()
 st.markdown("""<style>
-:root{--ink:#12263a;--muted:#687b8e;--line:#dfe8ed;--paper:#fff;--wash:#f4f8f8;--teal:#087f78;--teal2:#0a655f;--mint:#e2f3ef;--gold:#dca44b}
-.stApp{background:radial-gradient(circle at 82% 0%,#e7f5f1 0,transparent 27rem),linear-gradient(180deg,#f8fbfb 0,#f2f6f7 100%);color:var(--ink)}
-.block-container{max-width:1320px;padding:2.2rem 2.2rem 5rem}.main .block-container{animation:cvfade .25s ease-out}@keyframes cvfade{from{opacity:.3;transform:translateY(4px)}to{opacity:1;transform:none}}
-[data-testid="stSidebar"]{background:linear-gradient(180deg,#10283a 0%,#0c1c2a 100%);border-right:1px solid #1c3c50}
-[data-testid="stSidebar"] *{color:#eaf5f5}[data-testid="stSidebar"] [role="radiogroup"]{gap:.35rem}
-[data-testid="stSidebar"] label[data-baseweb="radio"]{padding:.72rem .8rem;border-radius:10px;transition:.15s;background:transparent}
-[data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked){background:#1b4653;border:1px solid #2e6070}
-.cv-brand{display:flex;gap:.75rem;align-items:center;padding:.25rem 0 1.2rem}.cv-logo{width:42px;height:42px;border-radius:13px;background:linear-gradient(145deg,#35c4b4,#0a766f);display:grid;place-items:center;font-weight:850;font-size:1.15rem;color:white;box-shadow:0 10px 25px #06131f66}.cv-brand strong{display:block;font-size:1.05rem}.cv-brand span{font-size:.72rem;color:#a9c6ce;letter-spacing:.08em;text-transform:uppercase}
-.cv-hero{padding:1.25rem 0 1.65rem;border-bottom:1px solid var(--line);margin-bottom:1.4rem}.cv-kicker{color:var(--teal);font-size:.72rem;font-weight:800;letter-spacing:.13em;text-transform:uppercase;margin-bottom:.45rem}.cv-hero h1{font-size:2.15rem;line-height:1.1;letter-spacing:-.035em;margin:0;color:var(--ink)}.cv-hero p{color:var(--muted);font-size:1rem;margin:.55rem 0 0;max-width:760px}
-.cv-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:.65rem;margin:.2rem 0 1.35rem}.cv-step{display:flex;align-items:center;gap:.65rem;background:#fff;border:1px solid var(--line);border-radius:13px;padding:.72rem .85rem;color:#789}.cv-step b{width:27px;height:27px;border-radius:50%;display:grid;place-items:center;background:#edf3f4;color:#607785;font-size:.78rem}.cv-step.active{border-color:#72bcb5;background:#f2fbf8;color:var(--ink);box-shadow:0 6px 20px #155b4f0c}.cv-step.active b{background:var(--teal);color:#fff}.cv-step.done b{background:#d9f1eb;color:#087065}
-.cv-note{background:linear-gradient(145deg,#102d3d,#163f4b);border-radius:18px;padding:1.3rem 1.35rem;color:#eaf7f5;min-height:190px;box-shadow:0 16px 38px #16374418}.cv-note .num{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:#8ecbc3}.cv-note h3{color:white;margin:.5rem 0}.cv-note p{color:#bfd5d8;font-size:.9rem}.cv-note ul{padding-left:1.15rem;color:#d9ebec;font-size:.87rem}
-.cv-avatar{width:46px;height:46px;border-radius:14px;background:linear-gradient(145deg,#dff2ed,#cbe9e4);color:#126e68;display:grid;place-items:center;font-weight:800;letter-spacing:.04em}.cv-meta{color:var(--muted);font-size:.86rem;margin-top:.25rem}.cv-pill{display:inline-block;padding:.2rem .5rem;border-radius:999px;background:#e7f3f0;color:#176c66;font-size:.7rem;font-weight:750;margin:.15rem .25rem .1rem 0}.cv-empty{text-align:center;padding:3rem 1rem;background:#fff;border:1px dashed #cbdade;border-radius:18px;color:var(--muted)}.cv-empty .icon{font-size:2rem;margin-bottom:.6rem}.cv-section-title{font-size:1rem;font-weight:780;color:var(--ink);margin:.2rem 0 .2rem}.cv-section-sub{color:var(--muted);font-size:.84rem;margin-bottom:.8rem}
-.cv-profile{display:flex;align-items:center;gap:1rem;padding:.25rem 0 .6rem}.cv-profile .cv-avatar{width:58px;height:58px;border-radius:17px;font-size:1.05rem}.cv-profile h2{margin:0;font-size:1.45rem}.cv-episode-head{padding:.15rem 0 .55rem}.cv-episode-title{font-size:1.02rem;font-weight:800;color:var(--ink)}.cv-episode-meta{font-size:.78rem;color:var(--muted);margin-top:.18rem}.cv-visit{border-left:3px solid #8bc9c1;padding:.15rem 0 .15rem 1rem;margin:.55rem 0 1rem}.cv-visit-title{font-weight:780;color:var(--ink)}.cv-field{margin:.5rem 0}.cv-field b{display:block;color:#587080;font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.15rem}.cv-field span{color:#263e50;font-size:.88rem;line-height:1.45}
-[data-testid="stVerticalBlockBorderWrapper"]{background:rgba(255,255,255,.88);border-color:var(--line)!important;border-radius:16px!important;box-shadow:0 8px 28px #17354b08}
-[data-baseweb="input"]>div,[data-baseweb="textarea"]>div,[data-baseweb="select"]>div{border-color:#d6e2e6!important;border-radius:11px!important;background:#fff!important}input,textarea{color:var(--ink)!important}
-[data-baseweb="tab-list"]{gap:.4rem;border-bottom:1px solid var(--line)}[data-baseweb="tab"]{border-radius:9px 9px 0 0;padding:.65rem 1rem}[aria-selected="true"][data-baseweb="tab"]{color:var(--teal)!important;background:#ecf7f4}
-div.stButton>button,div.stLinkButton>a{border-radius:10px;min-height:2.75rem;font-weight:720;transition:.18s}div.stButton>button:hover,div.stLinkButton>a:hover{transform:translateY(-1px)}div.stButton>button[kind="primary"]{background:linear-gradient(135deg,#0a8d84,#086e68);border:none;box-shadow:0 8px 20px #087f7828;color:#fff}
-[data-testid="stFileUploaderDropzone"]{background:#f7fbfa;border:1px dashed #91beb7;border-radius:14px}hr{border-color:var(--line)}
-@media(max-width:760px){.block-container{padding:1.25rem 1rem 4rem}.cv-hero h1{font-size:1.7rem}.cv-steps{grid-template-columns:1fr}.cv-step{padding:.55rem .7rem}}
+:root{--atlas-ink:#102330;--atlas-navy:#0b1d29;--atlas-blue:#2d7892;--atlas-xray:#9ec9d4;--atlas-coral:#c85f4d;--atlas-bone:#f2eee5;--atlas-paper:#fffdf8;--atlas-rule:#c9c3b6;--atlas-muted:#6e7678;--atlas-brass:#a78555}
+html,body,[class*="css"]{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.stApp{color:var(--atlas-ink);background-color:var(--atlas-bone);background-image:linear-gradient(rgba(16,35,48,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(16,35,48,.025) 1px,transparent 1px);background-size:28px 28px}
+.block-container{max-width:1280px;padding:2.1rem 2.4rem 5rem}.main .block-container{animation:atlas-enter .34s cubic-bezier(.2,.75,.3,1)}@keyframes atlas-enter{from{opacity:.25;transform:translateY(7px)}to{opacity:1;transform:none}}
+[data-testid="stSidebar"]{background:var(--atlas-navy);border-right:1px solid #24404f;box-shadow:10px 0 30px #06141d18}[data-testid="stSidebar"]:before{content:"";position:absolute;inset:0 0 auto;height:4px;background:var(--atlas-coral)}
+[data-testid="stSidebar"] *{color:#e9e6dc}[data-testid="stSidebar"] [role="radiogroup"]{gap:.15rem;border-top:1px solid #29404c;padding-top:.9rem}
+[data-testid="stSidebar"] label[data-baseweb="radio"]>div:first-child{display:none}
+[data-testid="stSidebar"] label[data-baseweb="radio"]{padding:.76rem .6rem;border-radius:1px;border-left:2px solid transparent;transition:.18s;background:transparent;font-size:.88rem;letter-spacing:.015em}
+[data-testid="stSidebar"] label[data-baseweb="radio"]:hover{background:#ffffff08;border-left-color:#789aa8}[data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked){background:#e6eef10d;border-left-color:var(--atlas-coral)}
+.cv-brand{display:flex;gap:.8rem;align-items:center;padding:.35rem 0 1.4rem}.cv-logo{width:46px;height:46px;border:1px solid #6f8994;display:grid;place-items:center;font-family:Georgia,"Times New Roman",serif;font-weight:700;font-size:.92rem;letter-spacing:.04em;color:#f4eee1;position:relative}.cv-logo:before,.cv-logo:after{content:"";position:absolute;background:var(--atlas-coral)}.cv-logo:before{width:13px;height:1px;bottom:7px;right:5px}.cv-logo:after{width:1px;height:13px;bottom:1px;right:11px}.cv-brand strong{display:block;font-family:Georgia,"Times New Roman",serif;font-size:1.06rem;letter-spacing:.015em}.cv-brand span{font-size:.6rem;color:#9fb0b6;letter-spacing:.19em;text-transform:uppercase}
+.cv-hero{position:relative;overflow:hidden;min-height:194px;padding:2.15rem 17rem 1.8rem 0;border-top:3px double var(--atlas-ink);border-bottom:1px solid var(--atlas-rule);margin-bottom:1.5rem}.cv-kicker{display:flex;align-items:center;gap:.6rem;color:var(--atlas-coral);font-size:.64rem;font-weight:800;letter-spacing:.19em;text-transform:uppercase;margin-bottom:.8rem}.cv-kicker:before{content:"";width:28px;height:1px;background:var(--atlas-coral)}.cv-hero h1{font-family:Georgia,"Times New Roman",serif;font-size:clamp(2.15rem,4.5vw,3.65rem);font-weight:500;line-height:1.02;letter-spacing:-.045em;margin:0;color:var(--atlas-ink);text-wrap:balance}.cv-hero p{color:#5d686b;font-size:.94rem;line-height:1.6;margin:.75rem 0 0;max-width:690px}.cv-folio{position:absolute;right:0;top:.9rem;color:#70797a;font-size:.58rem;letter-spacing:.18em;text-transform:uppercase;writing-mode:vertical-rl}.cv-anatomy{position:absolute;right:1.9rem;bottom:-1.15rem;width:210px;color:var(--atlas-blue);opacity:.24}.cv-anatomy svg{width:100%;height:auto}.cv-anatomy path,.cv-anatomy circle{vector-effect:non-scaling-stroke}
+.cv-steps{position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin:.2rem 0 1.35rem;border:1px solid var(--atlas-rule);background:var(--atlas-paper)}.cv-step{position:relative;display:flex;align-items:center;gap:.75rem;padding:.85rem 1rem;color:#768084;border-right:1px solid var(--atlas-rule);font-size:.78rem;letter-spacing:.04em;text-transform:uppercase}.cv-step:last-child{border-right:0}.cv-step b{font-family:Georgia,"Times New Roman",serif;font-size:1.2rem;font-weight:500;color:#a1a29d}.cv-step.active{color:var(--atlas-ink);background:#edf3f3}.cv-step.active:after{content:"";position:absolute;inset:auto 0 -1px;height:3px;background:var(--atlas-coral)}.cv-step.active b{color:var(--atlas-coral)}.cv-step.done{background:#f7f4ed;color:#59686b}.cv-step.done b{color:var(--atlas-blue)}
+.cv-note{position:relative;overflow:hidden;background:var(--atlas-navy);border-left:5px solid var(--atlas-coral);padding:1.55rem 1.45rem;color:#eae7df;min-height:220px;box-shadow:9px 12px 0 #d8d1c3}.cv-note:after{content:"01";position:absolute;right:-.15rem;bottom:-2.2rem;font-family:Georgia,"Times New Roman",serif;font-size:8rem;color:#fff;opacity:.035}.cv-note .num{font-size:.6rem;letter-spacing:.2em;text-transform:uppercase;color:#91bac7}.cv-note h3{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:1.5rem;color:#fff;margin:.65rem 0}.cv-note p{color:#b9c6c8;font-size:.88rem;line-height:1.5}.cv-note ul{padding-left:1.05rem;color:#d9dcd7;font-size:.8rem;line-height:1.7}
+.cv-avatar{width:46px;height:46px;border:1px solid #9fb4b8;background:#e5eded;color:var(--atlas-blue);display:grid;place-items:center;font-family:Georgia,"Times New Roman",serif;font-weight:700;letter-spacing:.04em}.cv-meta{color:var(--atlas-muted);font-size:.78rem;line-height:1.45;margin-top:.22rem}.cv-pill{display:inline-block;padding:.21rem .48rem;border:1px solid #b8c7c7;background:transparent;color:#47666e;font-size:.59rem;font-weight:750;letter-spacing:.075em;text-transform:uppercase;margin:.18rem .25rem .08rem 0}.cv-empty{text-align:center;padding:3.4rem 1rem;background:var(--atlas-paper);border:1px dashed #aaa89f;color:var(--atlas-muted)}.cv-empty .icon{font-family:Georgia,"Times New Roman",serif;font-size:2.4rem;color:var(--atlas-blue);margin-bottom:.6rem}.cv-section-title{font-family:Georgia,"Times New Roman",serif;font-size:1.22rem;color:var(--atlas-ink);margin:.15rem 0 .2rem}.cv-section-sub{color:var(--atlas-muted);font-size:.78rem;line-height:1.5;margin-bottom:.9rem}
+.cv-profile{display:flex;align-items:center;gap:1rem;padding:.35rem 0 .75rem}.cv-profile .cv-avatar{width:62px;height:62px;font-size:1.16rem}.cv-profile h2{font-family:Georgia,"Times New Roman",serif;font-weight:500;margin:0;font-size:1.65rem}.cv-episode-head{display:flex;align-items:center;gap:1rem;padding:.2rem 0 .7rem}.cv-case-no{min-width:56px;font-family:Georgia,"Times New Roman",serif;font-size:2.35rem;line-height:1;color:var(--atlas-coral);border-right:1px solid var(--atlas-rule);padding-right:.8rem}.cv-episode-title{font-family:Georgia,"Times New Roman",serif;font-size:1.22rem;font-weight:500;color:var(--atlas-ink)}.cv-episode-meta{font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;color:var(--atlas-muted);margin-top:.28rem}.cv-visit{position:relative;border-left:1px solid var(--atlas-blue);padding:.15rem 0 .15rem 1.25rem;margin:.65rem 0 1.1rem}.cv-visit:before{content:"";position:absolute;left:-5px;top:.45rem;width:9px;height:9px;border:2px solid var(--atlas-paper);background:var(--atlas-coral);box-shadow:0 0 0 1px var(--atlas-coral)}.cv-visit-title{font-family:Georgia,"Times New Roman",serif;font-size:1.02rem;color:var(--atlas-ink)}.cv-field{margin:.58rem 0}.cv-field b{display:block;color:#698087;font-size:.57rem;letter-spacing:.14em;text-transform:uppercase;margin-bottom:.18rem}.cv-field span{color:#263b44;font-size:.82rem;line-height:1.48}.cv-card-folio{color:var(--atlas-coral);font-family:Georgia,"Times New Roman",serif;font-size:.66rem;letter-spacing:.13em;text-transform:uppercase;border-bottom:1px solid #d8d2c6;padding-bottom:.45rem;margin-bottom:.75rem}
+[data-testid="stVerticalBlockBorderWrapper"]{background:rgba(255,253,248,.94);border-color:#cdc7ba!important;border-radius:2px!important;box-shadow:2px 3px 0 #d9d2c5;transition:transform .18s ease,border-color .18s ease}[data-testid="stVerticalBlockBorderWrapper"]:hover{border-color:#9d9a92!important}
+[data-baseweb="input"]>div,[data-baseweb="textarea"]>div,[data-baseweb="select"]>div{border-color:#bdb9ae!important;border-radius:2px!important;background:#fffefb!important;box-shadow:none!important}input,textarea{color:var(--atlas-ink)!important}input:focus,textarea:focus{caret-color:var(--atlas-coral)}
+[data-baseweb="tab-list"]{gap:0;border-bottom:1px solid var(--atlas-rule)}[data-baseweb="tab"]{border-radius:0;padding:.72rem 1rem;font-size:.75rem;letter-spacing:.04em}[aria-selected="true"][data-baseweb="tab"]{color:var(--atlas-ink)!important;background:#e8efef;border-top:2px solid var(--atlas-blue)}
+div.stButton>button,div.stLinkButton>a{border-radius:2px;min-height:2.7rem;font-size:.68rem;font-weight:780;letter-spacing:.08em;text-transform:uppercase;transition:.18s;border-color:#9f9b91;background:#fffdf8;color:var(--atlas-ink)}div.stButton>button:hover,div.stLinkButton>a:hover{transform:translateY(-1px);border-color:var(--atlas-coral);color:var(--atlas-coral)}div.stButton>button[kind="primary"]{background:var(--atlas-navy);border:1px solid var(--atlas-navy);box-shadow:4px 4px 0 var(--atlas-coral);color:#fff}div.stButton>button[kind="primary"]:hover{background:#163441;color:#fff;box-shadow:2px 2px 0 var(--atlas-coral)}
+[data-testid="stFileUploaderDropzone"]{background:#f8f5ee;border:1px dashed #9aa9aa;border-radius:2px}[data-testid="stMetric"]{background:var(--atlas-paper);border-top:2px solid var(--atlas-blue);padding:1rem;border-bottom:1px solid var(--atlas-rule)}[data-testid="stExpander"]{border-color:var(--atlas-rule)!important;border-radius:2px!important}hr{border-color:var(--atlas-rule)}
+@media(max-width:900px){.block-container{padding:1.45rem 1.25rem 4rem}.cv-hero{padding-right:10rem}.cv-anatomy{right:-1.5rem;width:180px;opacity:.15}.cv-folio{display:none}.cv-note{min-height:auto;margin-bottom:1.2rem}}
+@media(max-width:640px){.block-container{padding:1.05rem .82rem 3.5rem}.cv-hero{min-height:auto;padding:1.4rem 0 1.25rem}.cv-hero h1{font-size:2.15rem;max-width:92%}.cv-hero p{font-size:.84rem;line-height:1.5}.cv-anatomy{right:-4.2rem;bottom:-.8rem;width:155px;opacity:.08}.cv-steps{grid-template-columns:1fr}.cv-step{border-right:0;border-bottom:1px solid var(--atlas-rule);padding:.58rem .72rem}.cv-step:last-child{border-bottom:0}.cv-note{box-shadow:5px 6px 0 #d8d1c3}.cv-profile{align-items:flex-start}.cv-profile .cv-avatar{width:50px;height:50px;flex:0 0 50px}.cv-profile h2{font-size:1.3rem}.cv-episode-head{align-items:flex-start}.cv-case-no{min-width:42px;font-size:1.75rem;padding-right:.55rem}.cv-episode-title{font-size:1rem}.cv-pill{font-size:.54rem}.cv-visit{padding-left:1rem}.cv-field span{font-size:.78rem}div.stButton>button,div.stLinkButton>a{min-height:2.6rem}.cv-brand{padding-bottom:1rem}}
+@media(prefers-reduced-motion:reduce){.main .block-container{animation:none}*{scroll-behavior:auto!important}}
 </style>""",unsafe_allow_html=True)
 
 def page_header(kicker:str,title:str,subtitle:str):
-    st.markdown(f'<div class="cv-hero"><div class="cv-kicker">{kicker}</div><h1>{title}</h1><p>{subtitle}</p></div>',unsafe_allow_html=True)
+    jaw='<svg viewBox="0 0 240 190" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M47 28C29 52 25 82 36 113c10 29 31 46 56 52 15 4 25 2 28 1 3 1 13 3 28-1 25-6 46-23 56-52 11-31 7-61-11-85" stroke="currentColor" stroke-width="1.5"/><path d="M48 31c8 9 14 27 16 44 2 24 8 44 21 57 12 12 24 14 35 14s23-2 35-14c13-13 19-33 21-57 2-17 8-35 16-44M69 83c13-8 29-12 51-12s38 4 51 12M83 127c9-8 21-12 37-12s28 4 37 12" stroke="currentColor" stroke-width="1"/><path d="M86 75v37m17-40v43m17-44v44m17-43v43m17-40v37" stroke="currentColor" stroke-width=".75"/><circle cx="120" cy="146" r="3" stroke="currentColor"/></svg>'
+    st.markdown(f'<div class="cv-hero"><div class="cv-kicker">{kicker}</div><h1>{title}</h1><p>{subtitle}</p><div class="cv-folio">OMFS · CASE ATLAS · 2026</div><div class="cv-anatomy" aria-hidden="true">{jaw}</div></div>',unsafe_allow_html=True)
 
 def workflow_steps(active:int):
-    labels=("Paste SOAP","Review details","Save to Drive")
-    html="".join(f'<div class="cv-step {"done" if i<active else "active" if i==active else ""}"><b>{"✓" if i<active else i+1}</b><span>{label}</span></div>' for i,label in enumerate(labels))
+    labels=("Source note","Clinical indexing","Drive archive")
+    html="".join(f'<div class="cv-step {"done" if i<active else "active" if i==active else ""}"><b>{"✓" if i<active else f"{i+1:02d}"}</b><span>{label}</span></div>' for i,label in enumerate(labels))
     st.markdown(f'<div class="cv-steps">{html}</div>',unsafe_allow_html=True)
 
 def initials(name:str)->str:
@@ -319,8 +323,8 @@ def embedded_api(method,path,**kwargs):
     raise ValueError(f"Unsupported embedded route: {method} {path}")
 
 def sidebar():
-    st.sidebar.markdown('<div class="cv-brand"><div class="cv-logo">CV</div><div><strong>OMFS CaseVault</strong><span>Clinical archive</span></div></div>',unsafe_allow_html=True)
-    page=st.sidebar.radio("Navigation",["＋  New visit","◫  Patient folders","⌕  Clinical search","⚙  Settings"],label_visibility="collapsed")
+    st.sidebar.markdown('<div class="cv-brand"><div class="cv-logo">OM</div><div><strong>CaseVault</strong><span>OMFS Surgical Atlas</span></div></div>',unsafe_allow_html=True)
+    page=st.sidebar.radio("Navigation",["＋  Case intake","◫  Case registry","⌕  Atlas index","⚙  Archive control"],label_visibility="collapsed")
     st.sidebar.markdown("---")
     health=api("GET","/health")
     if health:
@@ -389,7 +393,7 @@ def preview(d):
     return not missing
 
 def quick_upload():
-    page_header("Quick capture","Archive a clinical visit","Paste the WhatsApp report, verify the structured fields, then file everything to the correct Drive episode.")
+    page_header("Clinical intake · Plate 01","Archive a surgical visit","Paste the source report, verify the clinical index, then file the record into its exact Drive episode.")
     active=2 if "saved" in st.session_state else 1 if "parsed" in st.session_state else 0;workflow_steps(active)
     if "saved" in st.session_state:
         x=st.session_state.saved
@@ -413,7 +417,7 @@ def quick_upload():
                         if EMBEDDED_MODE:result=prepare_drive_defaults(result)
                         st.session_state.parsed=result;st.rerun()
         with right:
-            st.markdown('<div class="cv-note"><div class="num">Private workflow</div><h3>From message to archive</h3><p>CaseVault recognizes the clinical structure locally, then lets you stay in control.</p><ul><li>No AI service receives the SOAP</li><li>Choose episode and visit stage</li><li>Save originals directly to Drive</li></ul></div>',unsafe_allow_html=True)
+            st.markdown('<div class="cv-note"><div class="num">Atlas intake · Plate 01</div><h3>From clinical note to surgical record</h3><p>CaseVault structures the report locally and preserves the original inside your private archive.</p><ul><li>Clinical parsing stays inside the app</li><li>Episode and operative stage remain editable</li><li>Original files are preserved in Drive</li></ul></div>',unsafe_allow_html=True)
     if "parsed" in st.session_state:
         st.markdown("<br>",unsafe_allow_html=True)
         with st.container(border=True):ready_to_save=preview(st.session_state.parsed)
@@ -448,7 +452,7 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
     rows=patient_metadata(metadata_rows,patient);rich_patient=(rows[0].get("patient") if rows else {}) or {}
     name=rich_patient.get("full_name") or patient.get("name") or "Patient"
     rm=rich_patient.get("medical_record_number") or patient.get("rm") or "—"
-    page_header("Patient case file",escape(name),"Episodes, visits, clinical index, and care team — read live from the configured Drive archive.")
+    page_header(f"Patient dossier · RM {escape(rm)}",escape(name),"A longitudinal surgical record of episodes, visits, diagnoses, procedures, and operative teams.")
     with st.container(border=True):
         left,right=st.columns([4,1])
         left.markdown(f'<div class="cv-profile"><div class="cv-avatar">{initials(name)}</div><div><h2>{escape(name)}</h2><div class="cv-meta">RM {escape(rm)} · {escape(rich_patient.get("hospital") or patient.get("hospital") or "Hospital not recorded")}</div></div></div>',unsafe_allow_html=True)
@@ -471,11 +475,12 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
         episode_rows=[row for row in rows if row.get("episode_folder_id")==episode_folder.get("id")]
         diagnoses=compact_values(x for row in episode_rows for x in row.get("diagnoses",[]))
         procedures=compact_values(x for row in episode_rows for x in row.get("procedures",[]))
+        episode_match=re.match(r"(?i)^EP\s*0*(\d+)",episode_folder.get("name", ""));episode_folio=f"{int(episode_match.group(1)):02d}" if episode_match else "—"
         try:visit_folders=list_drive_folders(drive,episode_folder["id"])
         except Exception:visit_folders=[]
         with st.container(border=True):
             head,open_col=st.columns([4,1])
-            head.markdown(f'<div class="cv-episode-head"><div class="cv-episode-title">{escape(episode_folder.get("name") or "Episode")}</div><div class="cv-episode-meta">{len(visit_folders)} Drive visit folder(s) · {len(episode_rows)} indexed visit(s)</div></div>',unsafe_allow_html=True)
+            head.markdown(f'<div class="cv-episode-head"><div class="cv-case-no">{episode_folio}</div><div><div class="cv-episode-title">{escape(episode_folder.get("name") or "Episode")}</div><div class="cv-episode-meta">{len(visit_folders)} Drive visit folder(s) · {len(episode_rows)} indexed visit(s)</div></div></div>',unsafe_allow_html=True)
             if episode_folder.get("webViewLink"):open_col.link_button("OPEN EPISODE  ↗",episode_folder["webViewLink"],use_container_width=True)
             summary_cols=st.columns(2)
             with summary_cols[0]:show_optional_field("Procedures / case",procedures)
@@ -520,7 +525,7 @@ def patients():
         patient=next((p for p in rows if p.get("id")==selected),None)
         if patient:patient_detail(patient,metadata_rows);return
         st.session_state.pop("selected_patient_id",None)
-    page_header("Drive catalog","Patient folders","Open a patient to review episodes, cases, visits, diagnoses, and the care team available in Drive.")
+    page_header("Case registry · Master index","Surgical dossiers","Browse the living archive by patient, then open a dossier to trace every episode and operative visit.")
     search_col,sync_col=st.columns([5,1]);q=search_col.text_input("Filter patients",placeholder="Search name or medical record number…",label_visibility="collapsed")
     if sync_col.button("↻  SYNC",use_container_width=True):st.rerun()
     if q:rows=[p for p in rows if q.casefold() in f"{p.get('folder_name','')} {p.get('rm','')}".casefold()]
@@ -532,6 +537,7 @@ def patients():
         latest_case=compact_values((latest.get("procedures") or latest.get("diagnoses") or [])[:2]);roles=latest.get("roles",{})
         with grid[i%2]:
             with st.container(border=True):
+                st.markdown(f'<div class="cv-card-folio">Case file · {i+1:03d}</div>',unsafe_allow_html=True)
                 av,body=st.columns([.75,4]);av.markdown(f'<div class="cv-avatar">{initials(p["name"])}</div>',unsafe_allow_html=True)
                 body.markdown(f"<strong>{escape(p['name'])}</strong><div class='cv-meta'>RM {escape(p.get('rm') or '—')} · {escape(p.get('hospital') or 'Hospital not parsed')}</div>",unsafe_allow_html=True)
                 chips=compact_values([p.get("sex"),f"{episode_count} episode(s)" if episode_count else "Drive archive",f"{len(patient_rows)} visit(s)" if patient_rows else None])
@@ -541,7 +547,7 @@ def patients():
                     st.session_state.selected_patient_id=p["id"];st.rerun()
 
 def search():
-    page_header("Clinical discovery","Search the archive","Find visits by patient, RM, diagnosis, procedure, DPJP, operator, or assistant operator.")
+    page_header("Atlas index · Cross-reference","Search the case archive","Cross-reference patients, medical record numbers, diagnoses, procedures, DPJP, operators, and assistants.")
     q=st.text_input("Search",placeholder="Try: odontektomi, an operator name, DPJP, diagnosis, or RM…",label_visibility="collapsed")
     if not q:
         st.markdown('<div class="cv-empty"><div class="icon">⌕</div><b>Search across structured Drive metadata</b><br>New CaseVault uploads are indexed by clinical and care-team fields.</div>',unsafe_allow_html=True);return
@@ -565,7 +571,7 @@ def search():
         for p in api("GET","/search",params={"q":q}) or []:st.markdown(f'<div class="cv-card"><b>{p["name"]}</b><br><span class="muted">RM {p["rm"]} · {p.get("hospital") or "—"}</span></div>',unsafe_allow_html=True)
 
 def settings_page():
-    page_header("Workspace","Settings & connection","Review the active Google account, Drive connection, and privacy boundary.")
+    page_header("Archive control · System plate","Settings & connection","Review the active Google identity, source-of-truth Drive, and the archive privacy boundary.")
     h=api("GET","/health") or {}
     c1,c2,c3=st.columns(3)
     c1.metric("CaseVault service","Online" if h.get("status")=="ok" else "Unavailable")
@@ -591,11 +597,11 @@ page=sidebar()
 if EMBEDDED_MODE and oauth_configured() and not st.session_state.get("google_user"):
     left,center,right=st.columns([1,1.25,1])
     with center:
-        st.markdown('<div style="height:8vh"></div><div class="cv-brand" style="justify-content:center"><div class="cv-logo">CV</div><div><strong style="color:#12263a">OMFS CaseVault</strong><span style="color:#607785">Private clinical archive</span></div></div>',unsafe_allow_html=True)
+        st.markdown('<div style="height:8vh"></div><div class="cv-brand" style="justify-content:center"><div class="cv-logo" style="color:#102330;border-color:#68818a">OM</div><div><strong style="color:#102330">CaseVault</strong><span style="color:#6e7678">OMFS Surgical Case Atlas</span></div></div>',unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown("## Welcome back")
             st.caption("Sign in with an authorized Google account to open the Drive-backed case archive.")
             begin_google_login()
             st.markdown('<div class="cv-meta" style="text-align:center;margin-top:.8rem">Private by default · No public links · No clinical AI processing</div>',unsafe_allow_html=True)
 else:
-    {"＋  New visit":quick_upload,"◫  Patient folders":patients,"⌕  Clinical search":search,"⚙  Settings":settings_page}[page]()
+    {"＋  Case intake":quick_upload,"◫  Case registry":patients,"⌕  Atlas index":search,"⚙  Archive control":settings_page}[page]()
