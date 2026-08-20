@@ -2,11 +2,18 @@ from __future__ import annotations
 import os
 import sys
 import io
+import base64
+import hashlib
+import json
 import secrets
+import sqlite3
+import time
 from pathlib import Path
 import httpx
 import streamlit as st
+from cryptography.fernet import Fernet, InvalidToken
 from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2.credentials import Credentials
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
 from PIL import Image
@@ -52,9 +59,39 @@ def oauth_flow(state=None):
 def state_signer():
     return URLSafeTimedSerializer(setting("SESSION_SECRET","casevault-change-me"),salt="casevault-google-oauth")
 
+def session_cipher():
+    key=base64.urlsafe_b64encode(hashlib.sha256(setting("SESSION_SECRET","casevault-change-me").encode()).digest())
+    return Fernet(key)
+
+def oauth_session_db():
+    Path("data").mkdir(exist_ok=True)
+    db=sqlite3.connect("data/casevault.db")
+    db.execute("CREATE TABLE IF NOT EXISTS oauth_sessions (id TEXT PRIMARY KEY, payload BLOB NOT NULL, expires_at INTEGER NOT NULL)")
+    db.execute("DELETE FROM oauth_sessions WHERE expires_at < ?",(int(time.time()),));db.commit()
+    return db
+
+def persist_google_session(credentials,user):
+    session_id=secrets.token_urlsafe(32)
+    payload=session_cipher().encrypt(json.dumps({"credentials":json.loads(credentials.to_json()),"user":user}).encode())
+    with oauth_session_db() as db:db.execute("INSERT INTO oauth_sessions VALUES (?,?,?)",(session_id,payload,int(time.time())+8*60*60))
+    return session_id
+
+def restore_google_session():
+    if st.session_state.get("google_user"):return
+    session_id=st.query_params.get("cv_session")
+    if not session_id:return
+    try:
+        with oauth_session_db() as db:row=db.execute("SELECT payload FROM oauth_sessions WHERE id=? AND expires_at>=?",(session_id,int(time.time()))).fetchone()
+        if not row:raise InvalidToken
+        saved=json.loads(session_cipher().decrypt(row[0]).decode())
+        st.session_state.google_credentials=Credentials.from_authorized_user_info(saved["credentials"])
+        st.session_state.google_user=saved["user"]
+    except (InvalidToken,ValueError,KeyError):
+        st.query_params.pop("cv_session",None)
+
 def begin_google_login():
     state=state_signer().dumps({"nonce":secrets.token_urlsafe(18)})
-    url,_=oauth_flow(state).authorization_url(access_type="offline",prompt="consent",include_granted_scopes="true")
+    url,_=oauth_flow(state).authorization_url(access_type="offline",prompt="consent")
     st.link_button("SIGN IN WITH GOOGLE",url,type="primary",use_container_width=True)
 
 def finish_google_login():
@@ -66,9 +103,9 @@ def finish_google_login():
         info=id_token.verify_oauth2_token(flow.credentials.id_token,GoogleRequest(),setting("GOOGLE_CLIENT_ID"))
         allowed={x.strip().lower() for x in setting("ALLOWED_GOOGLE_EMAILS").split(",") if x.strip()}
         if allowed and info.get("email","").lower() not in allowed:raise PermissionError("Akun Google ini tidak diizinkan.")
-        st.session_state.google_credentials=flow.credentials
-        st.session_state.google_user={"email":info["email"],"name":info.get("name",info["email"])}
-        st.query_params.clear();st.rerun()
+        user={"email":info["email"],"name":info.get("name",info["email"])}
+        session_id=persist_google_session(flow.credentials,user)
+        st.query_params.clear();st.query_params["cv_session"]=session_id;st.rerun()
     except (BadSignature,SignatureExpired):st.error("Login kedaluwarsa atau tidak valid. Silakan login ulang.")
     except Exception as exc:st.error(f"Google login gagal: {exc}")
 
@@ -78,6 +115,7 @@ def current_credentials():
     return credentials
 
 finish_google_login()
+restore_google_session()
 st.set_page_config(page_title="OMFS CaseVault",page_icon="🗂️",layout="wide",initial_sidebar_state="expanded")
 if st.query_params.get("session_token"):
     st.session_state.api_session_token=st.query_params["session_token"]
@@ -221,7 +259,11 @@ def settings_page():
         elif not st.session_state.get("google_user"):begin_google_login()
         else:
             st.success(f"Terhubung sebagai {st.session_state.google_user['email']}")
-            if st.button("SIGN OUT"):st.session_state.pop("google_credentials",None);st.session_state.pop("google_user",None);st.rerun()
+            if st.button("SIGN OUT"):
+                session_id=st.query_params.get("cv_session")
+                if session_id:
+                    with oauth_session_db() as db:db.execute("DELETE FROM oauth_sessions WHERE id=?",(session_id,))
+                st.session_state.pop("google_credentials",None);st.session_state.pop("google_user",None);st.query_params.clear();st.rerun()
         if not drive_configured():st.warning("GOOGLE_DRIVE_ROOT_FOLDER_ID belum diisi.")
     else:st.markdown(f"[Sign in with Google]({API}/auth/login)")
     st.info("OAuth uses Drive's app-created-files scope. CaseVault never creates public sharing links and sends no clinical data to AI services.")
