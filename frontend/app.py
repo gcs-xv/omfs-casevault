@@ -39,6 +39,8 @@ if EMBEDDED_MODE:
 API=os.getenv("API_URL","http://127.0.0.1:8000")
 APP_URL="https://omfs-casevault-dj7trsufq6jykaeuddo7b4.streamlit.app/oauth2callback"
 DRIVE_SCOPE="https://www.googleapis.com/auth/drive"
+EMAIL_SCOPE="https://www.googleapis.com/auth/userinfo.email"
+PROFILE_SCOPE="https://www.googleapis.com/auth/userinfo.profile"
 
 def setting(name,default=""):
     value=os.getenv(name)
@@ -54,7 +56,7 @@ def drive_configured():
 
 def oauth_flow(state=None):
     config={"web":{"client_id":setting("GOOGLE_CLIENT_ID"),"client_secret":setting("GOOGLE_CLIENT_SECRET"),"auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","redirect_uris":[setting("GOOGLE_REDIRECT_URI",APP_URL)]}}
-    return Flow.from_client_config(config,scopes=["openid","email","profile",DRIVE_SCOPE],state=state,redirect_uri=setting("GOOGLE_REDIRECT_URI",APP_URL))
+    return Flow.from_client_config(config,scopes=["openid",EMAIL_SCOPE,PROFILE_SCOPE,DRIVE_SCOPE],state=state,redirect_uri=setting("GOOGLE_REDIRECT_URI",APP_URL))
 
 def state_signer():
     return URLSafeTimedSerializer(setting("SESSION_SECRET","casevault-change-me"),salt="casevault-google-oauth")
