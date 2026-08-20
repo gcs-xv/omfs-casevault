@@ -28,7 +28,13 @@ except FileNotFoundError:
     _embedded_default="false"
 EMBEDDED_MODE=str(os.getenv("EMBEDDED_MODE",_embedded_default)).lower()=="true"
 if EMBEDDED_MODE:
-    from backend.services.drive_catalog import match_patient,patient_from_folder,search_catalog
+    from backend.services import drive_catalog
+    if not hasattr(drive_catalog,"match_patient"):
+        from importlib import reload
+        drive_catalog=reload(drive_catalog)
+    match_patient=drive_catalog.match_patient
+    patient_from_folder=drive_catalog.patient_from_folder
+    search_catalog=drive_catalog.search_catalog
     from backend.services.drive_service import DriveService
     from backend.services.soap_parser import parse_soap
     from backend.utils import normalization as normalization_utils
