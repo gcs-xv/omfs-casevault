@@ -2,7 +2,7 @@
 
 Clinical Case, SOAP, Follow-up & Photo Archive for Oral and Maxillofacial Surgery.
 
-CaseVault is a local-first FastAPI + Streamlit application built around one workflow: **paste the full WhatsApp SOAP → add photos → save**. It uses deterministic Python parsing, SQLite metadata, private Google Drive file storage, and Google OAuth. It does **not** require OpenAI, Gemini, Claude, any AI API key, paid database, or paid storage service.
+CaseVault is a FastAPI + Streamlit application built around one workflow: **paste the full WhatsApp SOAP → choose episode/stage → add photos → save**. The Streamlit Cloud deployment uses Google Drive as its clinical source of truth; SQLite is retained only for local-backend mode and encrypted short-lived OAuth sessions. It does **not** require an AI API key.
 
 ## What works
 
@@ -10,9 +10,12 @@ CaseVault is a local-first FastAPI + Streamlit application built around one work
 - Editable review before database commit; original SOAP always retained unchanged
 - Patient reuse by normalized RM; episode scoring; duplicate-visit protection
 - Structured Patient → Episode → Visit → Media database with UUIDs, indexes, foreign keys, audit records, and soft-delete fields
-- Google OAuth allowlist and private Drive `drive.file` access
+- Google OAuth allowlist and private Drive access
 - Human-readable patient/episode/visit folders, `SOAP.txt`, standardized multi-photo filenames, image metadata, and partial-failure reporting
 - Patient list, timeline API, visit viewer API, SQLite search, backup, restore, and CSV export
+- Streamlit Cloud patient catalog read live from the configured Drive root, direct folder links, Drive-synchronized deletion, and searchable metadata for newly saved visits
+- Explicit episode number/title and visit stage: Terjaring, Pre-op, Intra-op, or POD
+- Separate DPJP, operator, assistant-operator, and resident parsing
 
 ## macOS setup
 
@@ -44,7 +47,7 @@ Put that value in `SESSION_SECRET` in `.env`.
 7. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_DRIVE_ROOT_FOLDER_ID` in `.env`.
 8. Set `ALLOWED_GOOGLE_EMAILS` to a comma-separated allowlist. Do not leave it empty on a shared machine.
 
-CaseVault requests `openid email profile` and `drive.file`. It can manage only files/folders it creates through the app. It never applies public sharing permissions.
+The Streamlit Cloud app currently requests `openid`, canonical user-info scopes, and `drive` because it must read a pre-existing folder tree. This grants the app broad access to the signed-in account's Drive; use a dedicated clinical Google account and keep the OAuth app private/testing. CaseVault never applies public sharing permissions.
 
 ## Initialize and start
 
@@ -109,4 +112,4 @@ python scripts/init_db.py
 
 ## Privacy boundary
 
-SOAP text and photos are never sent to an AI service, analytics tracker, or third-party image host. SQLite is the metadata/search source of truth; Google Drive is the original-file source of truth. Do not expose ports 8000 or 8501 publicly without TLS, a reviewed reverse proxy, and production hardening.
+SOAP text and photos are never sent to an AI service, analytics tracker, or third-party image host. In Streamlit Cloud mode, Google Drive is the patient/file/search-metadata source of truth. Legacy Drive folders without `casevault-metadata.json` remain visible but cannot be searched by clinical fields that do not appear in their folder names. Do not use the deployment as a regulated production medical record without an organizational security, retention, access-control, and compliance review.
