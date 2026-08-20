@@ -10,6 +10,7 @@ import secrets
 import sqlite3
 import time
 from datetime import datetime
+from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 import httpx
@@ -20,6 +21,7 @@ from google.oauth2.credentials import Credentials
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from streamlit_paste_button import paste_image_button
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
@@ -119,28 +121,52 @@ def drive_service():
     if not credentials:raise ValueError("Silakan login dengan Google terlebih dahulu.")
     return DriveService(credentials,setting("GOOGLE_DRIVE_ROOT_FOLDER_ID"))
 
+def list_drive_folders(drive,parent_id:str)->list[dict]:
+    """Hot-reload-safe folder listing; works even if Streamlit cached an older service module."""
+    if hasattr(drive,"list_folders"):return drive.list_folders(parent_id)
+    folder_mime="application/vnd.google-apps.folder"
+    q=f"'{parent_id}' in parents and mimeType = '{folder_mime}' and trashed = false"
+    result=drive.api.files().list(q=q,pageSize=1000,fields="files(id,name,webViewLink,createdTime,modifiedTime)",orderBy="name_natural",supportsAllDrives=True,includeItemsFromAllDrives=True).execute()
+    return result.get("files",[])
+
+def list_drive_visit_metadata(drive)->list[dict]:
+    """Read metadata even when Streamlit still holds an older DriveService class."""
+    if hasattr(drive,"list_visit_metadata"):return drive.list_visit_metadata()
+    q="name = 'casevault-metadata.json' and trashed = false"
+    result=drive.api.files().list(q=q,pageSize=1000,fields="files(id,parents)",supportsAllDrives=True,includeItemsFromAllDrives=True).execute()
+    rows=[]
+    for item in result.get("files",[]):
+        try:
+            payload=json.loads(drive.api.files().get_media(fileId=item["id"],supportsAllDrives=True).execute().decode("utf-8"))
+            if payload.get("casevault_root_id")==drive.root_id:
+                payload["metadata_file_id"]=item["id"];rows.append(payload)
+        except Exception:
+            continue
+    return rows
+
 def drive_patients():
     drive=drive_service()
-    return [patient_from_folder(x) for x in drive.list_folders(drive.root_id)]
+    return [patient_from_folder(x) for x in list_drive_folders(drive,drive.root_id)]
 
 def prepare_drive_defaults(data:dict)->dict:
     """Choose fast filing defaults while keeping them editable."""
     episode=data.setdefault("episode",{});visit=data["visit"]
     episode.setdefault("title",(data.get("diagnoses") or data.get("procedures") or ["Clinical Episode"])[0])
-    existing=[];patient_found=False
+    existing=[];episode_names={};patient_found=False
     try:
         rm=normalize_rm(data["patient"].get("medical_record_number"));drive=drive_service()
         match=next((p for p in drive_patients() if p["rm_normalized"]==rm),None)
         if match:
             patient_found=True
-            for folder in drive.list_folders(match["id"]):
+            for folder in list_drive_folders(drive,match["id"]):
                 number=re.match(r"(?i)^EP\s*0*(\d+)",folder["name"])
-                if number:existing.append(int(number.group(1)))
+                if number:
+                    n=int(number.group(1));existing.append(n);episode_names[n]=folder["name"]
     except Exception:
         pass
     existing=sorted(set(existing));phase=visit.get("visit_phase") or "Terjaring"
     suggested=(max(existing)+1 if phase=="Terjaring" and existing else max(existing) if existing else 1)
-    episode.setdefault("number",suggested);data["_existing_episode_numbers"]=existing;data["_drive_patient_found"]=patient_found
+    episode.setdefault("number",suggested);data["_existing_episode_numbers"]=existing;data["_episode_folder_names"]=episode_names;data["_drive_patient_found"]=patient_found
     if phase=="POD" and visit.get("pod_number") is not None:visit["pod_roman"]=int_to_roman(int(visit["pod_number"]))
     return data
 
@@ -149,6 +175,21 @@ def int_to_roman(number:int)->str:
     for value,symbol in pairs:
         while number>=value:out.append(symbol);number-=value
     return "".join(out)
+
+@dataclass
+class MemoryUpload:
+    name:str
+    data:bytes
+    type:str="image/png"
+    def getvalue(self):return self.data
+
+def pasted_photos()->list[MemoryUpload]:
+    stored=st.session_state.setdefault("pasted_photos",{})
+    result=paste_image_button("PASTE IMAGE FROM CLIPBOARD",text_color="#ffffff",background_color="#087f78",hover_background_color="#086e68",key="clipboard_photo")
+    if result.image_data is not None:
+        buffer=io.BytesIO();result.image_data.save(buffer,format="PNG");data=buffer.getvalue();digest=hashlib.sha256(data).hexdigest()
+        if digest not in stored:stored[digest]=MemoryUpload(f"clipboard_{len(stored)+1:02d}.png",data)
+    return list(stored.values())
 
 def patient_folder_name(patient:dict)->str:
     identity=" ".join(x for x in [patient.get("title"),patient.get("full_name")] if x).strip()
@@ -167,7 +208,7 @@ def save_visit_to_drive(data:dict,photos:list)->dict:
     else:
         created=drive.create_folder(patient_folder_name(patient),drive.root_id);patient_folder_id=created.id;patient_drive_url=created.url
     episode_number=int(episode["number"]);prefix=f"EP{episode_number:02d}"
-    episode_folders=drive.list_folders(patient_folder_id)
+    episode_folders=list_drive_folders(drive,patient_folder_id)
     existing=next((x for x in episode_folders if x["name"].upper().startswith(prefix)),None)
     if existing:
         episode_folder_id=existing["id"]
@@ -264,16 +305,27 @@ def sidebar():
 
 def preview(d):
     p=d["patient"];v=d["visit"]
-    episode=d.setdefault("episode",{});existing=d.get("_existing_episode_numbers",[])
+    episode=d.setdefault("episode",{});existing=d.get("_existing_episode_numbers",[]);episode_names=d.get("_episode_folder_names",{})
     st.markdown('<div class="cv-section-title">Quick check</div><div class="cv-section-sub">CaseVault filled the details automatically. Change only what is wrong.</div>',unsafe_allow_html=True)
     identity_status="Existing Drive patient" if d.get("_drive_patient_found") else "New patient folder"
     st.markdown(f'<div style="display:flex;align-items:center;gap:.8rem;margin:.2rem 0 1rem"><div class="cv-avatar">{initials(p.get("full_name") or "CV")}</div><div><strong>{escape(p.get("full_name") or "Patient not detected")}</strong><div class="cv-meta">RM {escape(p.get("medical_record_number") or "not detected")} · {escape(identity_status)} · {escape(v.get("visit_date") or "date missing")}</div></div></div>',unsafe_allow_html=True)
     episode_choices=sorted(set(existing+[max(existing)+1 if existing else 1,int(episode.get("number") or 1)]))
-    def episode_label(number):return f"Episode {number} · {'existing' if number in existing else 'new'}"
+    def episode_label(number):
+        if number not in existing:return f"Episode {number} — New episode"
+        saved_name=episode_names.get(number,f"Episode {number}")
+        title=re.sub(r"(?i)^EP\s*0*\d+\s*[-–—:]?\s*","",saved_name).strip()
+        return f"Episode {number} — {title or 'Existing episode'}"
     c1,c2=st.columns(2)
     episode["number"]=c1.selectbox("File into",episode_choices,index=episode_choices.index(int(episode.get("number") or episode_choices[0])),format_func=episode_label)
     phases=["Terjaring","Pre-op","Intra-op","POD"];suggested=v.get("visit_phase") if v.get("visit_phase") in phases else "Terjaring"
     v["visit_phase"]=c2.selectbox("Visit stage",phases,index=phases.index(suggested))
+    if episode["number"] not in existing:
+        suggested_title=episode.get("title") or (d.get("procedures") or d.get("diagnoses") or ["Clinical Episode"])[0]
+        episode["title"]=st.text_input("Name this new episode",suggested_title,placeholder="e.g. Insisi biopsi or Marginal resection",help="This becomes the Drive folder name, for example: EP01 - Insisi biopsi")
+    else:
+        saved_name=episode_names.get(episode["number"],f"EP{episode['number']:02d}")
+        episode["title"]=re.sub(r"(?i)^EP\s*0*\d+\s*[-–—:]?\s*","",saved_name).strip() or "Clinical Episode"
+        st.caption(f"Using existing Drive folder: {saved_name}")
     if v["visit_phase"]=="POD":
         v["pod_number"]=st.number_input("Post-operative day",0,1000,int(v.get("pod_number") or 0),help="Roman numeral is generated automatically.")
         v["pod_roman"]=int_to_roman(int(v["pod_number"]))
@@ -289,7 +341,7 @@ def preview(d):
             c1,c2=st.columns(2);p["medical_record_number"]=c1.text_input("RM",p.get("medical_record_number") or "");p["sex"]=c2.text_input("Sex",p.get("sex") or "")
             c1,c2=st.columns(2);p["age"]=c1.number_input("Age",0,150,p.get("age") or 0);p["insurance"]=c2.text_input("Insurance",p.get("insurance") or "")
             p["hospital"]=st.text_input("Hospital",p.get("hospital") or "")
-            c1,c2=st.columns(2);v["visit_date"]=c1.text_input("Visit date",v.get("visit_date") or "");episode["title"]=c2.text_input("Episode title",episode.get("title") or "Clinical Episode")
+            v["visit_date"]=st.text_input("Visit date",v.get("visit_date") or "")
         with clinical_tab:
             d["diagnoses"]=st.text_area("Diagnosis · one per line","\n".join(d.get("diagnoses",[]))).splitlines()
             d["procedures"]=st.text_area("Procedures · one per line","\n".join(d.get("procedures",[]))).splitlines()
@@ -319,7 +371,7 @@ def quick_upload():
             if x.get("drive_url"):b.link_button("OPEN FOLDER ↗",x["drive_url"],use_container_width=True)
             if x.get("failed"):st.warning(f"{len(x['failed'])} photo(s) failed. Re-select those files to retry.")
         if st.button("＋  START ANOTHER VISIT"):
-            for key in ("parsed","saved","soap_input"):st.session_state.pop(key,None)
+            for key in ("parsed","saved","soap_input","pasted_photos"):st.session_state.pop(key,None)
             st.rerun()
         return
     if "parsed" not in st.session_state:
@@ -341,15 +393,24 @@ def quick_upload():
         st.markdown("<br>",unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown('<div class="cv-section-title">Attachments</div><div class="cv-section-sub">Optional · JPEG, PNG, or WebP. Upload begins only after final confirmation.</div>',unsafe_allow_html=True)
-            photos=st.file_uploader("Clinical photos",type=["jpg","jpeg","png","webp"],accept_multiple_files=True,label_visibility="collapsed")
-            if photos:st.success(f"{len(photos)} photo(s) ready for private Drive upload")
+            upload_col,paste_col=st.columns([1.7,1],gap="medium")
+            with upload_col:
+                photos=st.file_uploader("Drop photos or browse",type=["jpg","jpeg","png","webp"],accept_multiple_files=True)
+            with paste_col:
+                st.caption("Or copy an image, then paste it here")
+                pasted=pasted_photos()
+                if pasted and st.button("CLEAR PASTED PHOTOS",use_container_width=True):
+                    st.session_state.pop("pasted_photos",None);st.rerun()
+            all_photos=list(photos or [])+pasted
+            if pasted:st.image([photo.data for photo in pasted],width=130,caption=[photo.name for photo in pasted])
+            if all_photos:st.success(f"{len(all_photos)} photo(s) ready for private Drive upload")
         c1,c2=st.columns([1,2])
         if c1.button("←  EDIT ORIGINAL"):
             st.session_state.pop("parsed",None);st.rerun()
         if c2.button("SAVE VISIT TO GOOGLE DRIVE  →",type="primary",use_container_width=True,disabled=not ready_to_save):
             if EMBEDDED_MODE:
                 try:
-                    with st.spinner("Creating episode and visit folders…"):result=save_visit_to_drive(st.session_state.parsed,photos or [])
+                    with st.spinner("Creating episode and visit folders…"):result=save_visit_to_drive(st.session_state.parsed,all_photos)
                 except Exception as exc:st.error(f"Drive save failed: {exc}");result=None
             else:result=api("POST","/visits",json=st.session_state.parsed)
             if result:st.session_state.saved={**result,"name":st.session_state.parsed["patient"]["full_name"],"rm":st.session_state.parsed["patient"]["medical_record_number"],"phase":st.session_state.parsed["visit"].get("visit_phase")};st.rerun()
@@ -379,7 +440,7 @@ def search():
         st.markdown('<div class="cv-empty"><div class="icon">⌕</div><b>Search across structured Drive metadata</b><br>New CaseVault uploads are indexed by clinical and care-team fields.</div>',unsafe_allow_html=True);return
     if q and EMBEDDED_MODE:
         try:
-            with st.spinner("Searching Drive metadata…"):drive=drive_service();patient_rows=drive_patients();rows=search_catalog(patient_rows,drive.list_visit_metadata(),q)
+            with st.spinner("Searching Drive metadata…"):drive=drive_service();patient_rows=drive_patients();rows=search_catalog(patient_rows,list_drive_visit_metadata(drive),q)
             st.caption(f"{len(rows)} result(s) for “{q}”")
             for row in rows:
                 patient=row.get("patient",{});roles=row.get("roles",{})
