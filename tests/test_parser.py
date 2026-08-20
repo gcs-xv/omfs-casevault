@@ -38,3 +38,20 @@ P: Rencana pemeriksaan dan tindakan"""
     d=parse_soap(text)
     assert d["visit"]["visit_phase"]=="Terjaring"
     assert d["visit"]["pod_number"] is None and d["visit"]["pod_roman"] is None
+
+def test_identity_header_uses_canonical_soap_field_order():
+    text="""Izin melaporkan pasien Rawat Jalan RS Contoh, Kamis, 20/08/2026.
+
+Tn. Pasien Sintetis / L / 29 Tahun / Rawat Jalan / RSGMP Contoh / Jasa Raharja / RM 00.00.04
+
+S: Keluhan sintetis
+O: Kondisi stabil
+A: Diagnosis contoh
+P: Rencana contoh"""
+    d=parse_soap(text)
+    assert d["patient"]["title"]=="Tn." and d["patient"]["full_name"]=="Pasien Sintetis"
+    assert d["patient"]["sex"]=="L" and d["patient"]["age"]==29 and d["patient"]["age_unit"]=="Tahun"
+    assert d["visit"]["location"]=="Rawat Jalan"
+    assert d["patient"]["hospital"]=="RSGMP Contoh"
+    assert d["patient"]["insurance"]=="Jasa Raharja"
+    assert d["patient"]["medical_record_number"]=="00.00.04"

@@ -6,6 +6,7 @@ from backend.utils.roman import roman_to_int
 
 MONTHS={"januari":1,"februari":2,"maret":3,"april":4,"mei":5,"juni":6,"juli":7,"agustus":8,"september":9,"oktober":10,"november":11,"desember":12}
 SECTION_RE=re.compile(r"(?im)^\s*(S|O|A|P|Subjective|Objective|Assessment|Plan)\s*:\s*(?=\S|$)")
+CARE_SETTINGS={"rawat jalan":"Rawat Jalan","rawat inap":"Rawat Inap","igd":"IGD","emergency":"Emergency","day care":"Day Care","poliklinik":"Poliklinik"}
 
 def clean_block(value:str)->str:
     return "\n".join(re.sub(r"^\s*[•\-*]\s*", "", x).strip() for x in value.strip().splitlines() if x.strip()).strip()
@@ -39,20 +40,32 @@ def parse_header(header:str)->dict:
     parts=[x.strip() for x in candidate.split("/")]
     first=re.match(r"(?i)^(Tn\.|Ny\.|Nn\.|An\.|By\.|Sdr\.|Sdri\.)?\s*(.+)$",parts[0] if parts else "")
     title=(first.group(1) or "").strip() or None; name=first.group(2).strip() if first else ""
-    sex=next((p for p in parts[1:] if re.fullmatch(r"(?i)L|P|Laki-laki|Perempuan|Male|Female",p)),None)
+    sex_part=next((p for p in parts[1:] if re.fullmatch(r"(?i)L|P|Laki-laki|Perempuan|Male|Female",p)),None)
+    sex={"laki-laki":"L","male":"L","perempuan":"P","female":"P"}.get((sex_part or "").casefold(),sex_part.upper() if sex_part else None)
     age=next((re.match(r"(?i)^(\d+)\s*(Tahun|th|Bulan|Hari)\b",p) for p in parts[1:] if re.match(r"(?i)^(\d+)\s*(Tahun|th|Bulan|Hari)\b",p)),None)
     rm=re.search(r"(?i)\bRM\s*\.?\s*([\d.\- ]+)",candidate)
     pod=re.search(r"(?i)\bPOD\s+([IVXLCDM]+)(?:\s*\((\d+)\))?",candidate)
     rm_value=rm.group(1).strip() if rm else None
     if rm_value:
         rm_value=re.sub(r"\s+(?=POD\b)","",rm_value,flags=re.I).strip()
-    prior=parts[1:-1] if len(parts)>2 else parts[1:]
-    insurance=next((p for p in prior if re.search(r"(?i)BPJS|Umum|Asuransi",p)),None)
-    hospital=None
-    for p in prior:
-        if p not in {sex,insurance} and not re.match(r"(?i)^\d+\s*(Tahun|th|Bulan|Hari)",p): hospital=p
+    rm_index=next((i for i,p in enumerate(parts) if re.match(r"(?i)^RM\b",p)),len(parts))
+    location_index=next((i for i,p in enumerate(parts[1:rm_index],1) if p.casefold() in CARE_SETTINGS),None)
+    care_setting=CARE_SETTINGS.get(parts[location_index].casefold()) if location_index is not None else None
+    hospital=insurance=None
+    if location_index is not None:
+        # Canonical SOAP order: service / hospital / insurance / RM. Insurance is
+        # deliberately positional so providers such as Jasa Raharja also parse.
+        structured=parts[location_index+1:rm_index]
+        hospital=structured[0] if structured else None
+        insurance=" / ".join(structured[1:]) or None
+    else:
+        # Backwards-compatible fallback for older app folders: insurance / hospital / RM.
+        prior=[p for p in parts[1:rm_index] if p!=sex_part and not re.match(r"(?i)^\d+\s*(Tahun|th|Bulan|Hari)\b",p)]
+        hospital=prior[-1] if prior else None
+        insurance=" / ".join(prior[:-1]) or None
     reported=int(pod.group(2)) if pod and pod.group(2) else None; calculated=roman_to_int(pod.group(1)) if pod else None
-    return {"raw_header":candidate,"title":title,"full_name":name,"sex":sex,"age":int(age.group(1)) if age else None,"age_unit":age.group(2) if age else None,"insurance":insurance,"hospital":hospital,"medical_record_number":rm_value,"medical_record_number_normalized":normalize_rm(rm_value),"pod_roman":pod.group(1).upper() if pod else None,"pod_number":reported if reported is not None else calculated,"pod_calculated":calculated}
+    age_unit="Tahun" if age and age.group(2).casefold()=="th" else (age.group(2).title() if age else None)
+    return {"raw_header":candidate,"title":title,"full_name":name,"sex":sex,"age":int(age.group(1)) if age else None,"age_unit":age_unit,"care_setting":care_setting,"insurance":insurance,"hospital":hospital,"medical_record_number":rm_value,"medical_record_number_normalized":normalize_rm(rm_value),"pod_roman":pod.group(1).upper() if pod else None,"pod_number":reported if reported is not None else calculated,"pod_calculated":calculated}
 
 def extract_labeled(text:str,label:str,pattern:str=r"([^\n]+)")->str|None:
     m=re.search(rf"(?im)^\s*{label}\s*:\s*{pattern}",text); return m.group(1).strip(" ,") if m else None
@@ -107,4 +120,5 @@ def parse_soap(text:str)->dict:
     for label,value in (("Medical record number",patient["medical_record_number"]),("Visit date",parse_date(text))):
         if not value:warnings.append(f"{label} not found; review before saving")
     phase="POD" if patient["pod_roman"] else ("Intra-op" if re.search(r"(?i)\b(intra[ -]?op|laporan operasi)\b",text) else ("Pre-op" if re.search(r"(?i)\b(pre[ -]?op|pra[ -]?operasi)\b",text) else "Terjaring"))
-    return {"patient":patient,"visit":{"visit_date":parse_date(text).isoformat() if parse_date(text) else None,"visit_type":"Postoperative Day" if patient["pod_roman"] else "Outpatient","visit_phase":phase,"pod_roman":patient["pod_roman"],"pod_number":patient["pod_number"],"location":"Rawat Jalan" if re.search(r"(?i)Rawat Jalan",text) else ("Rawat Inap" if re.search(r"(?i)Rawat Inap",text) else None),"hospital":patient["hospital"],**parse_vitals(obj),"extraoral":eo,"intraoral":io},"soap":{"subjective":clean_block(sections.get("S","")),"objective_raw":obj,"assessment":clean_block(sections.get("A","")),"plan":clean_block(plan),"plan_items":clean_block(plan).splitlines() if plan else [],"proposal":clean_block(proposal_m[1]) if proposal_m else None,"original_soap":original},"episode_candidates":[],"procedures":procedures,"diagnoses":diagnoses,"anesthesia":anesthesia,"residents":residents,"operator":operator,"assistant_operators":assistant_operators,"dpjp":{"full_name":dpjp} if dpjp else None,"warnings":warnings,"confidence":{"patient":0.95 if patient["medical_record_number"] else 0.5,"visit":0.95 if parse_date(text) else 0.55}}
+    location=patient.get("care_setting") or ("Rawat Jalan" if re.search(r"(?i)Rawat Jalan",text) else ("Rawat Inap" if re.search(r"(?i)Rawat Inap",text) else None))
+    return {"patient":patient,"visit":{"visit_date":parse_date(text).isoformat() if parse_date(text) else None,"visit_type":"Postoperative Day" if patient["pod_roman"] else "Outpatient","visit_phase":phase,"pod_roman":patient["pod_roman"],"pod_number":patient["pod_number"],"location":location,"hospital":patient["hospital"],**parse_vitals(obj),"extraoral":eo,"intraoral":io},"soap":{"subjective":clean_block(sections.get("S","")),"objective_raw":obj,"assessment":clean_block(sections.get("A","")),"plan":clean_block(plan),"plan_items":clean_block(plan).splitlines() if plan else [],"proposal":clean_block(proposal_m[1]) if proposal_m else None,"original_soap":original},"episode_candidates":[],"procedures":procedures,"diagnoses":diagnoses,"anesthesia":anesthesia,"residents":residents,"operator":operator,"assistant_operators":assistant_operators,"dpjp":{"full_name":dpjp} if dpjp else None,"warnings":warnings,"confidence":{"patient":0.95 if patient["medical_record_number"] else 0.5,"visit":0.95 if parse_date(text) else 0.55}}

@@ -216,10 +216,10 @@ def pasted_photos()->list[MemoryUpload]:
         if digest not in stored:stored[digest]=MemoryUpload(f"clipboard_{len(stored)+1:02d}.png",data)
     return list(stored.values())
 
-def patient_folder_name(patient:dict)->str:
+def patient_folder_name(patient:dict,care_setting:str|None=None)->str:
     identity=" ".join(x for x in [patient.get("title"),patient.get("full_name")] if x).strip()
     age=f"{patient.get('age')} {patient.get('age_unit') or 'Tahun'}" if patient.get("age") else None
-    parts=[identity,patient.get("sex"),age,patient.get("insurance"),patient.get("hospital"),f"RM {patient.get('medical_record_number')}"]
+    parts=[identity,patient.get("sex"),age,care_setting or patient.get("care_setting"),patient.get("hospital"),patient.get("insurance"),f"RM {patient.get('medical_record_number')}"]
     return " / ".join(str(x) for x in parts if x)
 
 def save_visit_to_drive(data:dict,photos:list)->dict:
@@ -231,7 +231,7 @@ def save_visit_to_drive(data:dict,photos:list)->dict:
     if matches:
         patient_folder_id=matches[0]["id"];patient_drive_url=matches[0]["drive_url"]
     else:
-        created=drive.create_folder(patient_folder_name(patient),drive.root_id);patient_folder_id=created.id;patient_drive_url=created.url
+        created=drive.create_folder(patient_folder_name(patient,visit.get("location")),drive.root_id);patient_folder_id=created.id;patient_drive_url=created.url
     episode_number=int(episode["number"]);prefix=f"EP{episode_number:02d}"
     episode_folders=list_drive_folders(drive,patient_folder_id)
     existing=next((x for x in episode_folders if x["name"].upper().startswith(prefix)),None)
@@ -434,7 +434,7 @@ def preview(d):
             p["full_name"]=st.text_input("Full name",p.get("full_name") or "")
             c1,c2=st.columns(2);p["medical_record_number"]=c1.text_input("RM",p.get("medical_record_number") or "");p["sex"]=c2.text_input("Sex",p.get("sex") or "")
             c1,c2=st.columns(2);p["age"]=c1.number_input("Age",0,150,p.get("age") or 0);p["insurance"]=c2.text_input("Insurance",p.get("insurance") or "")
-            p["hospital"]=st.text_input("Hospital",p.get("hospital") or "")
+            c1,c2=st.columns(2);v["location"]=c1.text_input("Care setting",v.get("location") or "");p["hospital"]=c2.text_input("Hospital",p.get("hospital") or "")
             v["visit_date"]=st.text_input("Visit date",v.get("visit_date") or "")
         with clinical_tab:
             d["diagnoses"]=st.text_area("Diagnosis · one per line","\n".join(d.get("diagnoses",[]))).splitlines()
@@ -521,12 +521,13 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
     age_unit=rich_patient.get("age_unit") or patient.get("age_unit") or "Tahun"
     insurance=rich_patient.get("insurance") or patient.get("insurance")
     hospital=rich_patient.get("hospital") or patient.get("hospital")
+    care_setting=rich_patient.get("care_setting") or patient.get("care_setting")
     page_header(f"Patient dossier · RM {escape(rm)}",escape(name),"A longitudinal surgical record of episodes, visits, diagnoses, procedures, and operative teams.")
     with st.container(border=True):
         left,right=st.columns([4,1])
         left.markdown(f'<div class="cv-profile"><div class="cv-avatar">{initials(name)}</div><div><h2>{escape(name)}</h2><div class="cv-meta">Patient identity</div></div></div>',unsafe_allow_html=True)
         if patient.get("drive_url"):right.link_button("OPEN PATIENT DRIVE  ↗",patient["drive_url"],use_container_width=True)
-        details=[("Title",title),("Gender",sex),("Age",f"{age} {age_unit}" if age is not None else None),("Insurance",insurance),("Hospital",hospital),("RM",rm)]
+        details=[("Title",title),("Gender",sex),("Age",f"{age} {age_unit}" if age is not None else None),("Care setting",care_setting),("Hospital",hospital),("Insurance",insurance),("RM",rm)]
         st.markdown("".join(f'<span class="cv-pill"><b>{escape(label)}</b> · {escape(str(value))}</span>' for label,value in details if value),unsafe_allow_html=True)
 
     try:
