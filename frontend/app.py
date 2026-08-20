@@ -3,6 +3,19 @@ import os
 import httpx
 import streamlit as st
 
+try:
+    _embedded_default=st.secrets.get("EMBEDDED_MODE","false")
+except FileNotFoundError:
+    _embedded_default="false"
+EMBEDDED_MODE=str(os.getenv("EMBEDDED_MODE",_embedded_default)).lower()=="true"
+if EMBEDDED_MODE:
+    from sqlalchemy import select
+    from backend.core.database import Base, SessionLocal, engine
+    from backend.models import Patient
+    from backend.services.case_service import save_visit, search_cases
+    from backend.services.soap_parser import parse_soap
+    Base.metadata.create_all(engine)
+
 API=os.getenv("API_URL","http://127.0.0.1:8000")
 st.set_page_config(page_title="OMFS CaseVault",page_icon="🗂️",layout="wide",initial_sidebar_state="expanded")
 if st.query_params.get("session_token"):
@@ -17,6 +30,8 @@ h1,h2,h3{color:#17283b}div.stButton>button[kind="primary"]{background:#176b67;bo
 
 def api(method,path,**kwargs):
     try:
+        if EMBEDDED_MODE:
+            return embedded_api(method,path,**kwargs)
         if st.session_state.get("api_session_token"):
             kwargs.setdefault("headers",{})["Authorization"]=f"Bearer {st.session_state.api_session_token}"
         r=httpx.request(method,API+path,timeout=90,**kwargs)
@@ -24,6 +39,24 @@ def api(method,path,**kwargs):
             st.error("Sign in is required. Configure Google OAuth, or use AUTH_DISABLED=true only for a private local development session.");return None
         r.raise_for_status();return r.json()
     except Exception as e:st.error(f"CaseVault service unavailable: {e}");return None
+
+def embedded_api(method,path,**kwargs):
+    """Single-process demo adapter for Streamlit Community Cloud."""
+    if path=="/health":return {"status":"ok","auth_configured":False,"drive_configured":False,"mode":"private demo"}
+    if path=="/parser/soap":return parse_soap(kwargs["json"]["soap"])
+    with SessionLocal() as db:
+        if path=="/patients":
+            rows=db.scalars(select(Patient).order_by(Patient.updated_at.desc()).limit(30)).all()
+            return [{"id":p.id,"name":p.full_name,"rm":p.medical_record_number,"sex":p.sex,"hospital":p.primary_hospital} for p in rows]
+        if path=="/search":
+            return [{"id":p.id,"name":p.full_name,"rm":p.medical_record_number,"hospital":p.primary_hospital} for p in search_cases(db,kwargs.get("params",{}).get("q",""))]
+        if method=="POST" and path=="/visits":
+            patient,episode,visit=save_visit(db,kwargs["json"],"streamlit-demo")
+            return {"patient_id":patient.id,"episode_id":episode.id,"visit_id":visit.id,"save_state":"demo_saved"}
+        if method=="POST" and path.endswith("/media"):
+            st.warning("Photo/Drive upload belum aktif pada deployment demo. File tidak diunggah.")
+            return {"uploaded":[],"failed":[],"save_state":"demo_saved"}
+    raise ValueError(f"Unsupported embedded route: {method} {path}")
 
 def sidebar():
     st.sidebar.markdown("## OMFS CaseVault\nClinical Case Archive")
@@ -95,7 +128,8 @@ def search():
 def settings_page():
     st.markdown("# Settings & setup")
     h=api("GET","/health") or {};st.json(h)
-    st.markdown(f"[Sign in with Google]({API}/auth/login)")
+    if EMBEDDED_MODE:st.info("Private demo mode · Google OAuth and Drive will be enabled after the final URL is assigned.")
+    else:st.markdown(f"[Sign in with Google]({API}/auth/login)")
     st.info("OAuth uses Drive's app-created-files scope. CaseVault never creates public sharing links and sends no clinical data to AI services.")
 
 page=sidebar()
