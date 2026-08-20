@@ -2,7 +2,7 @@
 
 Clinical Case, SOAP, Follow-up & Photo Archive for Oral and Maxillofacial Surgery.
 
-CaseVault is a FastAPI + Streamlit application built around one workflow: **paste the full WhatsApp SOAP → choose episode/stage → add photos → save**. The Streamlit Cloud deployment uses Google Drive as its clinical source of truth; SQLite is retained only for local-backend mode and encrypted short-lived OAuth sessions. It does **not** require an AI API key.
+CaseVault is a FastAPI + Streamlit application built around one workflow: **paste the full WhatsApp SOAP → choose episode/stage → add photos → save**. The Streamlit Cloud deployment uses Google Drive as its clinical source of truth. App users sign in with a CaseVault username/password; one archive Google account supplies Drive access in the background. It does **not** require an AI API key or a paid service.
 
 ## What works
 
@@ -10,12 +10,13 @@ CaseVault is a FastAPI + Streamlit application built around one workflow: **past
 - Editable review before database commit; original SOAP always retained unchanged
 - Patient reuse by normalized RM; episode scoring; duplicate-visit protection
 - Structured Patient → Episode → Visit → Media database with UUIDs, indexes, foreign keys, audit records, and soft-delete fields
-- Google OAuth allowlist and private Drive access
+- Simple `user`/`admin` application login with an independently connected archive Google account
 - Human-readable patient/episode/visit folders, `SOAP.txt`, standardized multi-photo filenames, image metadata, and partial-failure reporting
 - Patient list, timeline API, visit viewer API, SQLite search, backup, restore, and CSV export
 - Streamlit Cloud patient catalog read live from the configured Drive root, direct folder links, Drive-synchronized deletion, and searchable metadata for newly saved visits
 - Explicit episode number/title and visit stage: Terjaring, Pre-op, Intra-op, or POD
 - Separate DPJP, operator, assistant-operator, and resident parsing
+- Expandable visit records with inline SOAP, private photo previews, and web downloads
 
 ## macOS setup
 
@@ -36,18 +37,31 @@ python -c 'import secrets; print(secrets.token_urlsafe(48))'
 
 Put that value in `SESSION_SECRET` in `.env`.
 
-## Google OAuth and Drive setup
+## Free Streamlit Cloud archive-account setup
 
 1. Open Google Cloud Console and create or select a project.
 2. Enable only **Google Drive API**.
-3. Configure the OAuth consent screen. For a personal/testing app, add the resident Google accounts as test users.
+3. Configure the OAuth consent screen and set the audience to **In production**. This prevents the archive refresh token from expiring after seven days. Only the archive account completes this consent flow.
 4. Create an **OAuth client ID → Web application**.
-5. Add `http://127.0.0.1:8000/auth/callback` as an authorized redirect URI. It must exactly match `GOOGLE_REDIRECT_URI`.
-6. In Google Drive, create a private folder named `OMFS CaseVault`. Open it and copy the folder ID from its URL.
-7. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_DRIVE_ROOT_FOLDER_ID` in `.env`.
-8. Set `ALLOWED_GOOGLE_EMAILS` to a comma-separated allowlist. Do not leave it empty on a shared machine.
+5. Add the exact Streamlit app root, for example `https://your-app.streamlit.app/`, as an authorized redirect URI.
+6. Use a dedicated personal Google account as the archive owner. Keep the existing patient tree inside that account's **My Drive**, then copy the root folder ID from its URL.
+7. Add these initial values to Streamlit App → Settings → Secrets:
 
-The Streamlit Cloud app currently requests `openid`, canonical user-info scopes, and `drive` because it must read a pre-existing folder tree. This grants the app broad access to the signed-in account's Drive; use a dedicated clinical Google account and keep the OAuth app private/testing. CaseVault never applies public sharing permissions.
+```toml
+EMBEDDED_MODE = "true"
+CASEVAULT_PUBLIC_URL = "https://your-app.streamlit.app/"
+GOOGLE_CLIENT_ID = "your-client-id.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "your-client-secret"
+GOOGLE_DRIVE_ROOT_FOLDER_ID = "your-root-folder-id"
+SESSION_SECRET = "a-long-random-value"
+CASEVAULT_USER_PASSWORD = "user"
+CASEVAULT_ADMIN_PASSWORD = "admin"
+```
+
+8. Sign in to CaseVault as `admin` / `admin`, open **Archive control**, and select **Connect archive Google account**. The unverified warning and Drive consent are completed once by the archive owner only.
+9. CaseVault returns one `GOOGLE_ARCHIVE_REFRESH_TOKEN` line. Copy it into Streamlit Secrets and save. After the app restarts, all normal users see only the CaseVault username/password screen.
+
+The literal `user/user` and `admin/admin` credentials are a temporary convenience requested for initial rollout. Replace both password values before storing real clinical data. The two roles currently have identical application capabilities; the role is recorded with new uploads for future access-control rules.
 
 ## Initialize and start
 
@@ -90,10 +104,10 @@ Keep backups private: they contain identifiable clinical data. A Drive backup ca
 
 ## Troubleshooting
 
-- **Authentication required:** click Sign in with Google in Settings. Confirm the email is in `ALLOWED_GOOGLE_EMAILS`.
-- **OAuth redirect mismatch:** copy the redirect URI exactly in both Google Cloud and `.env`.
-- **Drive authorization expired:** sign in again; failed images can be reselected without overwriting successful media records.
-- **Drive permission missing:** confirm Drive API is enabled and the OAuth consent includes `drive.file`.
+- **Authentication required:** use `user/user` or `admin/admin` until the two passwords are changed in Streamlit Secrets.
+- **OAuth redirect mismatch during one-time setup:** make `CASEVAULT_PUBLIC_URL` exactly match an authorized redirect URI, including its trailing slash.
+- **Archive authorization expired:** reconnect the archive account from Archive control and replace `GOOGLE_ARCHIVE_REFRESH_TOKEN`.
+- **Drive permission missing:** confirm Drive API is enabled, the archive account owns or can edit the configured root folder, and the OAuth grant includes Drive access.
 - **Database locked:** close duplicate processes, allow the current request to finish, then retry. Do not place the live SQLite file in a synced folder.
 - **Unsupported photo:** use JPEG, PNG, or WebP. HEIC may first be exported as JPEG on macOS.
 - **POD conflict:** CaseVault retains both values and requires review; it never silently changes clinical text.

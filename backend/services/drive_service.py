@@ -2,7 +2,6 @@ from __future__ import annotations
 import io
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -21,20 +20,28 @@ class DriveService:
         self.api=build("drive","v3",credentials=credentials,cache_discovery=False); self.root_id=root_id
 
     def create_folder(self,name:str,parent_id:str)->DriveItem:
-        obj=self.api.files().create(body={"name":safe_name(name),"mimeType":FOLDER_MIME,"parents":[parent_id]},fields="id,webViewLink").execute()
+        obj=self.api.files().create(body={"name":safe_name(name),"mimeType":FOLDER_MIME,"parents":[parent_id]},fields="id,webViewLink",supportsAllDrives=True).execute()
         return DriveItem(obj["id"],obj.get("webViewLink",f"https://drive.google.com/drive/folders/{obj['id']}"))
 
     def upload_bytes(self,name:str,data:bytes,mime_type:str,parent_id:str,app_properties:dict|None=None)->DriveItem:
         media=MediaIoBaseUpload(io.BytesIO(data),mimetype=mime_type,resumable=True)
         body={"name":safe_name(name),"parents":[parent_id]}
         if app_properties:body["appProperties"]=app_properties
-        obj=self.api.files().create(body=body,media_body=media,fields="id,webViewLink").execute()
+        obj=self.api.files().create(body=body,media_body=media,fields="id,webViewLink",supportsAllDrives=True).execute()
         return DriveItem(obj["id"],obj.get("webViewLink",f"https://drive.google.com/file/d/{obj['id']}/view"))
 
     def list_folders(self,parent_id:str)->list[dict]:
         q=f"'{parent_id}' in parents and mimeType = '{FOLDER_MIME}' and trashed = false"
         result=self.api.files().list(q=q,pageSize=1000,fields="files(id,name,webViewLink,createdTime,modifiedTime)",orderBy="name_natural",supportsAllDrives=True,includeItemsFromAllDrives=True).execute()
         return result.get("files",[])
+
+    def list_files(self,parent_id:str)->list[dict]:
+        q=f"'{parent_id}' in parents and mimeType != '{FOLDER_MIME}' and trashed = false"
+        result=self.api.files().list(q=q,pageSize=1000,fields="files(id,name,mimeType,size,webViewLink,createdTime,modifiedTime)",orderBy="name_natural",supportsAllDrives=True,includeItemsFromAllDrives=True).execute()
+        return result.get("files",[])
+
+    def download_bytes(self,file_id:str)->bytes:
+        return self.api.files().get_media(fileId=file_id,supportsAllDrives=True).execute()
 
     def list_visit_metadata(self)->list[dict]:
         q="name = 'casevault-metadata.json' and trashed = false"

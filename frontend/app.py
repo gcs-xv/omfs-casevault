@@ -2,12 +2,11 @@ from __future__ import annotations
 import os
 import sys
 import io
-import base64
 import hashlib
+import hmac
 import json
 import re
 import secrets
-import sqlite3
 import time
 from datetime import datetime
 from dataclasses import dataclass
@@ -15,10 +14,8 @@ from html import escape
 from pathlib import Path
 import httpx
 import streamlit as st
-from cryptography.fernet import Fernet, InvalidToken
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
-from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from streamlit_paste_button import paste_image_button
@@ -34,13 +31,11 @@ if EMBEDDED_MODE:
     from backend.services.drive_catalog import patient_from_folder,search_catalog
     from backend.services.drive_service import DriveService
     from backend.services.soap_parser import parse_soap
-    from backend.utils.normalization import normalize_rm,safe_name
+    from backend.utils.normalization import clinical_photo_name,normalize_rm
 
 API=os.getenv("API_URL","http://127.0.0.1:8000")
-APP_URL="https://omfs-casevault-dj7trsufq6jykaeuddo7b4.streamlit.app/oauth2callback"
+APP_URL="https://omfs-casevault-dj7trsufq6jykaeuddo7b4.streamlit.app/"
 DRIVE_SCOPE="https://www.googleapis.com/auth/drive"
-EMAIL_SCOPE="https://www.googleapis.com/auth/userinfo.email"
-PROFILE_SCOPE="https://www.googleapis.com/auth/userinfo.profile"
 
 def setting(name,default=""):
     value=os.getenv(name)
@@ -48,78 +43,92 @@ def setting(name,default=""):
     try:return st.secrets.get(name,default)
     except FileNotFoundError:return default
 
-def oauth_configured():
+def archive_oauth_configured():
     return bool(setting("GOOGLE_CLIENT_ID") and setting("GOOGLE_CLIENT_SECRET"))
+
+def archive_token_configured():
+    return bool(setting("GOOGLE_ARCHIVE_REFRESH_TOKEN") or st.session_state.get("generated_archive_refresh_token"))
+
+def password_auth_configured():
+    return True
 
 def drive_configured():
     return bool(setting("GOOGLE_DRIVE_ROOT_FOLDER_ID"))
 
 def oauth_flow(state=None):
-    config={"web":{"client_id":setting("GOOGLE_CLIENT_ID"),"client_secret":setting("GOOGLE_CLIENT_SECRET"),"auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","redirect_uris":[setting("GOOGLE_REDIRECT_URI",APP_URL)]}}
-    return Flow.from_client_config(config,scopes=["openid",EMAIL_SCOPE,PROFILE_SCOPE,DRIVE_SCOPE],state=state,redirect_uri=setting("GOOGLE_REDIRECT_URI",APP_URL))
+    redirect_uri=str(setting("CASEVAULT_PUBLIC_URL",APP_URL) if EMBEDDED_MODE else setting("GOOGLE_REDIRECT_URI",APP_URL))
+    config={"web":{"client_id":setting("GOOGLE_CLIENT_ID"),"client_secret":setting("GOOGLE_CLIENT_SECRET"),"auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","redirect_uris":[redirect_uri]}}
+    return Flow.from_client_config(config,scopes=[DRIVE_SCOPE],state=state,redirect_uri=redirect_uri)
 
 def state_signer():
-    return URLSafeTimedSerializer(setting("SESSION_SECRET","casevault-change-me"),salt="casevault-google-oauth")
+    return URLSafeTimedSerializer(setting("SESSION_SECRET","casevault-change-me"),salt="casevault-archive-oauth")
 
-def session_cipher():
-    key=base64.urlsafe_b64encode(hashlib.sha256(setting("SESSION_SECRET","casevault-change-me").encode()).digest())
-    return Fernet(key)
-
-def oauth_session_db():
-    Path("data").mkdir(exist_ok=True)
-    db=sqlite3.connect("data/casevault.db")
-    db.execute("CREATE TABLE IF NOT EXISTS oauth_sessions (id TEXT PRIMARY KEY, payload BLOB NOT NULL, expires_at INTEGER NOT NULL)")
-    db.execute("DELETE FROM oauth_sessions WHERE expires_at < ?",(int(time.time()),));db.commit()
-    return db
-
-def persist_google_session(credentials,user):
-    session_id=secrets.token_urlsafe(32)
-    payload=session_cipher().encrypt(json.dumps({"credentials":json.loads(credentials.to_json()),"user":user}).encode())
-    with oauth_session_db() as db:db.execute("INSERT INTO oauth_sessions VALUES (?,?,?)",(session_id,payload,int(time.time())+8*60*60))
-    return session_id
-
-def restore_google_session():
-    if st.session_state.get("google_user"):return
-    session_id=st.query_params.get("cv_session")
-    if not session_id:return
-    try:
-        with oauth_session_db() as db:row=db.execute("SELECT payload FROM oauth_sessions WHERE id=? AND expires_at>=?",(session_id,int(time.time()))).fetchone()
-        if not row:raise InvalidToken
-        saved=json.loads(session_cipher().decrypt(row[0]).decode())
-        st.session_state.google_credentials=Credentials.from_authorized_user_info(saved["credentials"])
-        st.session_state.google_user=saved["user"]
-    except (InvalidToken,ValueError,KeyError):
-        st.query_params.pop("cv_session",None)
-
-def begin_google_login():
-    state=state_signer().dumps({"nonce":secrets.token_urlsafe(18)})
+def begin_archive_connect():
+    user=st.session_state.get("app_user") or {}
+    state=state_signer().dumps({"nonce":secrets.token_urlsafe(18),"username":user.get("username"),"role":user.get("role")})
     url,_=oauth_flow(state).authorization_url(access_type="offline",prompt="consent")
-    st.link_button("SIGN IN WITH GOOGLE",url,type="primary",use_container_width=True)
+    st.link_button("CONNECT ARCHIVE GOOGLE ACCOUNT",url,type="primary",use_container_width=True)
 
-def finish_google_login():
+def finish_archive_connect():
     code=st.query_params.get("code");state=st.query_params.get("state")
     if not code:return
     try:
-        state_signer().loads(state,max_age=600)
+        signed=state_signer().loads(state,max_age=600)
         flow=oauth_flow(state);flow.fetch_token(code=code)
-        info=id_token.verify_oauth2_token(flow.credentials.id_token,GoogleRequest(),setting("GOOGLE_CLIENT_ID"))
-        allowed={x.strip().lower() for x in setting("ALLOWED_GOOGLE_EMAILS").split(",") if x.strip()}
-        if allowed and info.get("email","").lower() not in allowed:raise PermissionError("Akun Google ini tidak diizinkan.")
-        user={"email":info["email"],"name":info.get("name",info["email"])}
-        session_id=persist_google_session(flow.credentials,user)
-        st.query_params.clear();st.query_params["cv_session"]=session_id;st.rerun()
-    except (BadSignature,SignatureExpired):st.error("Login kedaluwarsa atau tidak valid. Silakan login ulang.")
-    except Exception as exc:st.error(f"Google login gagal: {exc}")
+        if not flow.credentials.refresh_token:raise ValueError("Google tidak mengembalikan refresh token. Cabut akses aplikasi di Google Account lalu coba lagi.")
+        st.session_state.app_user={"username":signed.get("username") or "admin","role":signed.get("role") or "admin"}
+        st.session_state.generated_archive_refresh_token=flow.credentials.refresh_token
+        st.session_state.nav_page="⚙  Archive control"
+        st.query_params.clear()
+    except (BadSignature,SignatureExpired):st.error("Proses koneksi kedaluwarsa atau tidak valid. Silakan ulangi dari Archive control.")
+    except Exception as exc:st.error(f"Koneksi akun arsip gagal: {exc}")
 
-def current_credentials():
-    credentials=st.session_state.get("google_credentials")
-    if credentials and credentials.expired and credentials.refresh_token:credentials.refresh(GoogleRequest())
+def archive_credentials():
+    refresh_token=setting("GOOGLE_ARCHIVE_REFRESH_TOKEN") or st.session_state.get("generated_archive_refresh_token")
+    if not refresh_token:raise ValueError("Archive account belum terhubung. Admin perlu menambahkan GOOGLE_ARCHIVE_REFRESH_TOKEN ke Streamlit Secrets.")
+    credentials=st.session_state.get("archive_google_credentials")
+    if not credentials or credentials.refresh_token!=refresh_token:
+        credentials=Credentials(token=None,refresh_token=refresh_token,token_uri="https://oauth2.googleapis.com/token",client_id=setting("GOOGLE_CLIENT_ID"),client_secret=setting("GOOGLE_CLIENT_SECRET"),scopes=[DRIVE_SCOPE])
+    if not credentials.valid:credentials.refresh(GoogleRequest())
+    st.session_state.archive_google_credentials=credentials
     return credentials
 
 def drive_service():
-    credentials=current_credentials()
-    if not credentials:raise ValueError("Silakan login dengan Google terlebih dahulu.")
-    return DriveService(credentials,setting("GOOGLE_DRIVE_ROOT_FOLDER_ID"))
+    return DriveService(archive_credentials(),setting("GOOGLE_DRIVE_ROOT_FOLDER_ID"))
+
+def configured_users()->dict[str,dict]:
+    return {
+        "user":{"password":str(setting("CASEVAULT_USER_PASSWORD","user")),"role":"user"},
+        "admin":{"password":str(setting("CASEVAULT_ADMIN_PASSWORD","admin")),"role":"admin"},
+    }
+
+def authenticate(username:str,password:str)->dict|None:
+    record=configured_users().get(username.strip().lower())
+    if not record or not hmac.compare_digest(password,record["password"]):return None
+    return {"username":username.strip().lower(),"role":record["role"]}
+
+def login_screen():
+    left,center,right=st.columns([1,1.25,1])
+    with center:
+        st.markdown('<div style="height:8vh"></div><div class="cv-brand" style="justify-content:center"><div class="cv-logo" style="color:#102330;border-color:#68818a">OM</div><div><strong style="color:#102330">CaseVault</strong><span style="color:#6e7678">OMFS Surgical Case Atlas</span></div></div>',unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("## Welcome back")
+            st.caption("Sign in to open the private surgical archive.")
+            with st.form("casevault_login"):
+                username=st.text_input("Username",autocomplete="username")
+                password=st.text_input("Password",type="password",autocomplete="current-password")
+                submitted=st.form_submit_button("SIGN IN  →",type="primary",use_container_width=True)
+            if submitted:
+                locked_until=st.session_state.get("login_locked_until",0)
+                if time.time()<locked_until:st.error("Terlalu banyak percobaan. Tunggu sebentar lalu coba lagi.")
+                else:
+                    user=authenticate(username,password)
+                    if user:
+                        st.session_state.app_user=user;st.session_state.login_failures=0;st.rerun()
+                    failures=st.session_state.get("login_failures",0)+1;st.session_state.login_failures=failures
+                    if failures>=5:st.session_state.login_locked_until=time.time()+30
+                    st.error("Username atau password salah.")
+            st.markdown('<div class="cv-meta" style="text-align:center;margin-top:.8rem">Private archive · Password protected · No Google sign-in</div>',unsafe_allow_html=True)
 
 def list_drive_folders(drive,parent_id:str)->list[dict]:
     """Hot-reload-safe folder listing; works even if Streamlit cached an older service module."""
@@ -128,6 +137,17 @@ def list_drive_folders(drive,parent_id:str)->list[dict]:
     q=f"'{parent_id}' in parents and mimeType = '{folder_mime}' and trashed = false"
     result=drive.api.files().list(q=q,pageSize=1000,fields="files(id,name,webViewLink,createdTime,modifiedTime)",orderBy="name_natural",supportsAllDrives=True,includeItemsFromAllDrives=True).execute()
     return result.get("files",[])
+
+def list_drive_files(drive,parent_id:str)->list[dict]:
+    if hasattr(drive,"list_files"):return drive.list_files(parent_id)
+    folder_mime="application/vnd.google-apps.folder"
+    q=f"'{parent_id}' in parents and mimeType != '{folder_mime}' and trashed = false"
+    result=drive.api.files().list(q=q,pageSize=1000,fields="files(id,name,mimeType,size,webViewLink,createdTime,modifiedTime)",orderBy="name_natural",supportsAllDrives=True,includeItemsFromAllDrives=True).execute()
+    return result.get("files",[])
+
+def download_drive_bytes(drive,file_id:str)->bytes:
+    if hasattr(drive,"download_bytes"):return drive.download_bytes(file_id)
+    return drive.api.files().get_media(fileId=file_id,supportsAllDrives=True).execute()
 
 def list_drive_visit_metadata(drive)->list[dict]:
     """Read metadata even when Streamlit still holds an older DriveService class."""
@@ -214,6 +234,7 @@ def save_visit_to_drive(data:dict,photos:list)->dict:
         episode_folder_id=existing["id"]
     else:
         episode_folder_id=drive.create_folder(f"{prefix} - {episode['title'] or 'Clinical Episode'}",patient_folder_id).id
+    visit_sequence=len(list_drive_folders(drive,episode_folder_id))+1
     phase=visit["visit_phase"]
     label=phase
     if phase=="POD":
@@ -225,18 +246,18 @@ def save_visit_to_drive(data:dict,photos:list)->dict:
     drive.upload_bytes("SOAP.txt",data["soap"]["original_soap"].encode("utf-8"),"text/plain",visit_folder.id)
     roles={"dpjp":(data.get("dpjp") or {}).get("full_name"),"operator":data.get("operator"),"assistant_operators":data.get("assistant_operators",[])}
     search_blob="\n".join(str(x) for x in [patient.get("full_name"),patient.get("medical_record_number"),*data.get("diagnoses",[]),*data.get("procedures",[]),roles["dpjp"],roles["operator"],*roles["assistant_operators"],data["soap"].get("assessment"),data["soap"].get("plan")] if x)
-    metadata={"schema_version":1,"casevault_root_id":drive.root_id,"patient":patient,"patient_folder_id":patient_folder_id,"patient_drive_url":patient_drive_url,"episode":episode,"episode_folder_id":episode_folder_id,"visit":visit,"visit_folder_id":visit_folder.id,"visit_drive_url":visit_folder.url,"diagnoses":data.get("diagnoses",[]),"procedures":data.get("procedures",[]),"roles":roles,"search_blob":search_blob,"saved_at":datetime.utcnow().isoformat()+"Z","saved_by":st.session_state.google_user["email"]}
-    drive.upload_bytes("casevault-metadata.json",json.dumps(metadata,ensure_ascii=False,indent=2).encode("utf-8"),"application/json",visit_folder.id,{"casevault_root":drive.root_id,"casevault_type":"visit_metadata"})
-    uploaded=[];failed=[]
+    uploaded=[];failed=[];attachments=[]
     for i,file in enumerate(photos,1):
         try:
-            name=f"{i:03d}_{safe_name(file.name)}";drive.upload_bytes(name,file.getvalue(),file.type,visit_folder.id);uploaded.append(name)
+            name=clinical_photo_name(patient.get("full_name") or "Patient",patient.get("medical_record_number") or "",episode_number,visit_sequence,visit["visit_date"],phase,visit.get("pod_roman"),i,file.name)
+            drive.upload_bytes(name,file.getvalue(),file.type,visit_folder.id);uploaded.append(name);attachments.append({"original_name":file.name,"archive_name":name,"mime_type":file.type})
         except Exception as exc:failed.append({"file":file.name,"error":str(exc)})
-    return {"uploaded":uploaded,"failed":failed,"drive_url":visit_folder.url,"patient_drive_url":patient_drive_url,"save_state":"complete" if not failed else "partial_failure"}
+    metadata={"schema_version":2,"casevault_root_id":drive.root_id,"patient":patient,"patient_folder_id":patient_folder_id,"patient_drive_url":patient_drive_url,"episode":episode,"episode_folder_id":episode_folder_id,"visit":{**visit,"visit_sequence":visit_sequence},"visit_folder_id":visit_folder.id,"visit_drive_url":visit_folder.url,"diagnoses":data.get("diagnoses",[]),"procedures":data.get("procedures",[]),"roles":roles,"soap":data.get("soap",{}),"attachments":attachments,"search_blob":search_blob,"saved_at":datetime.utcnow().isoformat()+"Z","saved_by":st.session_state.app_user["username"],"saved_by_role":st.session_state.app_user["role"]}
+    drive.upload_bytes("casevault-metadata.json",json.dumps(metadata,ensure_ascii=False,indent=2).encode("utf-8"),"application/json",visit_folder.id,{"casevault_root":drive.root_id,"casevault_type":"visit_metadata"})
+    return {"uploaded":uploaded,"failed":failed,"drive_url":visit_folder.url,"patient_drive_url":patient_drive_url,"visit_sequence":visit_sequence,"save_state":"complete" if not failed else "partial_failure"}
 
-finish_google_login()
-restore_google_session()
 st.set_page_config(page_title="OMFS CaseVault · Surgical Case Atlas",page_icon="🦷",layout="wide",initial_sidebar_state="auto")
+finish_archive_connect()
 if st.query_params.get("session_token"):
     st.session_state.api_session_token=st.query_params["session_token"]
     st.query_params.clear()
@@ -304,6 +325,42 @@ def show_optional_field(label:str,values):
     values=compact_values(values)
     if values:st.markdown(f'<div class="cv-field"><b>{escape(label)}</b><span>{escape(" · ".join(values))}</span></div>',unsafe_allow_html=True)
 
+def render_visit_contents(drive,visit_folder:dict,row:dict|None,key_prefix:str):
+    row=row or {};roles=row.get("roles",{})
+    info_cols=st.columns(2)
+    with info_cols[0]:
+        show_optional_field("Procedure",row.get("procedures",[]));show_optional_field("Diagnosis",row.get("diagnoses",[]))
+    with info_cols[1]:
+        show_optional_field("DPJP",roles.get("dpjp"));show_optional_field("Operator",roles.get("operator"));show_optional_field("Assistant operator",roles.get("assistant_operators",[]))
+    try:
+        files=list_drive_files(drive,visit_folder["id"])
+        soap=(row.get("soap") or {}).get("original_soap") or ""
+        soap_file=next((item for item in files if item.get("name","").casefold()=="soap.txt"),None)
+        if not soap and soap_file:soap=download_drive_bytes(drive,soap_file["id"]).decode("utf-8",errors="replace")
+        photos=[item for item in files if str(item.get("mimeType","")).startswith("image/")]
+    except Exception as exc:
+        st.warning(f"Record files could not be loaded: {exc}");return
+    st.markdown('<div class="cv-section-title" style="margin-top:1rem">SOAP report</div>',unsafe_allow_html=True)
+    if soap:
+        st.code(soap,language=None,wrap_lines=True)
+        st.download_button("DOWNLOAD SOAP",soap,file_name="SOAP.txt",mime="text/plain",key=f"soap_download_{key_prefix}")
+    else:st.caption("SOAP.txt was not found in this legacy visit folder.")
+    st.markdown(f'<div class="cv-section-title" style="margin-top:1rem">Clinical photos · {len(photos)}</div>',unsafe_allow_html=True)
+    if not photos:
+        st.caption("No image files found in this visit folder.");return
+    show=st.toggle("Show photos inside CaseVault",key=f"show_photos_{key_prefix}",help="Photos are downloaded from the private Drive only when this is enabled.")
+    if not show:
+        st.caption("Turn this on to preview and download photos without leaving CaseVault.");return
+    grid=st.columns(2,gap="medium")
+    for index,item in enumerate(photos):
+        with grid[index%2]:
+            try:
+                data=download_drive_bytes(drive,item["id"])
+                st.image(data,caption=item.get("name") or "Clinical photo",use_container_width=True)
+                st.download_button("DOWNLOAD PHOTO",data,file_name=item.get("name") or f"clinical-photo-{index+1}.jpg",mime=item.get("mimeType") or "application/octet-stream",key=f"photo_download_{key_prefix}_{item['id']}",use_container_width=True)
+                if item.get("webViewLink"):st.link_button("OPEN IN DRIVE  ↗",item["webViewLink"],use_container_width=True)
+            except Exception as exc:st.warning(f"{item.get('name','Photo')}: {exc}")
+
 def api(method,path,**kwargs):
     try:
         if EMBEDDED_MODE:
@@ -318,20 +375,20 @@ def api(method,path,**kwargs):
 
 def embedded_api(method,path,**kwargs):
     """Single-process demo adapter for Streamlit Community Cloud."""
-    if path=="/health":return {"status":"ok","auth_configured":oauth_configured(),"drive_configured":drive_configured(),"signed_in":bool(st.session_state.get("google_user")),"mode":"Streamlit Cloud"}
+    if path=="/health":return {"status":"ok","auth_configured":password_auth_configured(),"drive_configured":drive_configured() and archive_token_configured(),"signed_in":bool(st.session_state.get("app_user")),"mode":"Streamlit Cloud"}
     if path=="/parser/soap":return parse_soap(kwargs["json"]["soap"])
     raise ValueError(f"Unsupported embedded route: {method} {path}")
 
 def sidebar():
     st.sidebar.markdown('<div class="cv-brand"><div class="cv-logo">OM</div><div><strong>CaseVault</strong><span>OMFS Surgical Atlas</span></div></div>',unsafe_allow_html=True)
-    page=st.sidebar.radio("Navigation",["＋  Case intake","◫  Case registry","⌕  Atlas index","⚙  Archive control"],label_visibility="collapsed")
+    page=st.sidebar.radio("Navigation",["＋  Case intake","◫  Case registry","⌕  Atlas index","⚙  Archive control"],label_visibility="collapsed",key="nav_page")
     st.sidebar.markdown("---")
     health=api("GET","/health")
     if health:
         st.sidebar.caption("●  CASEVAULT ONLINE")
-        if not health["auth_configured"]:st.sidebar.warning("Google OAuth needs setup")
-        elif EMBEDDED_MODE and st.session_state.get("google_user"):
-            st.sidebar.markdown(f"<small>Signed in as</small><br><b>{st.session_state.google_user['email']}</b>",unsafe_allow_html=True)
+        if EMBEDDED_MODE and st.session_state.get("app_user"):
+            user=st.session_state.app_user
+            st.sidebar.markdown(f"<small>Signed in as</small><br><b>{escape(user['username'])}</b> <span class='cv-pill'>{escape(user['role'])}</span>",unsafe_allow_html=True)
     return page
 
 def preview(d):
@@ -492,27 +549,29 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
                 visit=(row or {}).get("visit",{});roles=(row or {}).get("roles",{})
                 phase=visit.get("visit_phase");pod=visit.get("pod_roman") or visit.get("pod_number")
                 visit_title=" · ".join(compact_values([visit.get("visit_date"),f"POD {pod}" if phase=="POD" and pod is not None else phase])) or visit_folder.get("name") or "Visit"
-                with st.container():
-                    title_col,visit_link=st.columns([4,1]);title_col.markdown(f'<div class="cv-visit"><div class="cv-visit-title">{escape(visit_title)}</div><div class="cv-meta">{escape(visit_folder.get("name") or "Drive visit folder")}</div></div>',unsafe_allow_html=True)
+                with st.expander(f"{visit_title}  ·  Open record"):
+                    title_col,visit_link=st.columns([4,1]);title_col.markdown(f'<div class="cv-meta">Drive folder · {escape(visit_folder.get("name") or "Visit")}</div>',unsafe_allow_html=True)
                     if visit_folder.get("webViewLink"):visit_link.link_button("OPEN VISIT  ↗",visit_folder["webViewLink"],use_container_width=True)
-                    if row:
-                        info_cols=st.columns(2)
-                        with info_cols[0]:
-                            show_optional_field("Procedure",row.get("procedures",[]));show_optional_field("Diagnosis",row.get("diagnoses",[]))
-                        with info_cols[1]:
-                            show_optional_field("DPJP",roles.get("dpjp"));show_optional_field("Operator",roles.get("operator"));show_optional_field("Assistant operator",roles.get("assistant_operators",[]))
+                    render_visit_contents(drive,visit_folder,row,f"{episode_folder['id']}_{visit_folder['id']}")
             for row in episode_rows:
                 if row.get("visit_folder_id") in drive_visit_ids:continue
                 visit=row.get("visit",{});roles=row.get("roles",{})
-                st.markdown(f'<div class="cv-visit"><div class="cv-visit-title">{escape(visit.get("visit_date") or visit.get("visit_phase") or "Indexed visit")}</div><div class="cv-meta">Indexed metadata · Drive folder unavailable</div></div>',unsafe_allow_html=True)
-                show_optional_field("Operator",roles.get("operator"))
+                with st.expander(f"{visit.get('visit_date') or visit.get('visit_phase') or 'Indexed visit'}  ·  Indexed record"):
+                    st.caption("Drive visit folder is unavailable; showing saved metadata.")
+                    show_optional_field("Procedure",row.get("procedures",[]));show_optional_field("Diagnosis",row.get("diagnoses",[]));show_optional_field("DPJP",roles.get("dpjp"));show_optional_field("Operator",roles.get("operator"))
+                    soap=(row.get("soap") or {}).get("original_soap")
+                    if soap:st.code(soap,language=None,wrap_lines=True)
 
     if metadata_only:
-        with st.expander(f"{len(metadata_only)} additional indexed visit(s)"):
-            for row in metadata_only:
-                episode=row.get("episode",{});visit=row.get("visit",{});roles=row.get("roles",{})
-                st.markdown(f"**{escape(str(episode.get('title') or 'Episode'))}** · {escape(str(visit.get('visit_date') or visit.get('visit_phase') or 'Visit'))}")
+        st.markdown(f"### {len(metadata_only)} additional indexed visit(s)")
+        for index,row in enumerate(metadata_only):
+            episode=row.get("episode",{});visit=row.get("visit",{});roles=row.get("roles",{})
+            with st.expander(f"{episode.get('title') or 'Episode'} · {visit.get('visit_date') or visit.get('visit_phase') or 'Visit'}"):
                 show_optional_field("Procedure",row.get("procedures",[]));show_optional_field("Diagnosis",row.get("diagnoses",[]));show_optional_field("Operator",roles.get("operator"))
+                soap=(row.get("soap") or {}).get("original_soap")
+                if soap:
+                    st.code(soap,language=None,wrap_lines=True)
+                    st.download_button("DOWNLOAD SOAP",soap,file_name="SOAP.txt",mime="text/plain",key=f"metadata_soap_{index}_{row.get('metadata_file_id','unknown')}")
 
 def patients():
     try:
@@ -571,37 +630,39 @@ def search():
         for p in api("GET","/search",params={"q":q}) or []:st.markdown(f'<div class="cv-card"><b>{p["name"]}</b><br><span class="muted">RM {p["rm"]} · {p.get("hospital") or "—"}</span></div>',unsafe_allow_html=True)
 
 def settings_page():
-    page_header("Archive control · System plate","Settings & connection","Review the active Google identity, source-of-truth Drive, and the archive privacy boundary.")
+    page_header("Archive control · System plate","Settings & connection","Review the active CaseVault identity, source-of-truth Drive, and the archive privacy boundary.")
     h=api("GET","/health") or {}
     c1,c2,c3=st.columns(3)
     c1.metric("CaseVault service","Online" if h.get("status")=="ok" else "Unavailable")
-    c2.metric("Google OAuth","Connected" if st.session_state.get("google_user") else "Not connected")
-    c3.metric("Drive root","Configured" if drive_configured() else "Missing")
+    c2.metric("App login",(st.session_state.get("app_user") or {}).get("role","Not signed in").title())
+    c3.metric("Archive Drive","Connected" if drive_configured() and archive_token_configured() else "Setup needed")
     if EMBEDDED_MODE:
-        if not oauth_configured():st.warning("Tambahkan GOOGLE_CLIENT_ID dan GOOGLE_CLIENT_SECRET ke Streamlit Secrets.")
-        elif not st.session_state.get("google_user"):begin_google_login()
-        else:
-            with st.container(border=True):
-                st.markdown(f"**Google account**  \n{st.session_state.google_user['email']}")
-                st.caption("Patient folders and new visit files are read from and written to the configured private Drive root.")
-            if st.button("SIGN OUT OF CASEVAULT"):
-                session_id=st.query_params.get("cv_session")
-                if session_id:
-                    with oauth_session_db() as db:db.execute("DELETE FROM oauth_sessions WHERE id=?",(session_id,))
-                st.session_state.pop("google_credentials",None);st.session_state.pop("google_user",None);st.query_params.clear();st.rerun()
+        user=st.session_state.get("app_user") or {}
+        with st.container(border=True):
+            st.markdown(f"**CaseVault account**  \n{escape(user.get('username','—'))} · {escape(user.get('role','—'))}")
+            st.caption("User and admin currently have the same capabilities. Role-based restrictions can be enabled later.")
+        if setting("CASEVAULT_USER_PASSWORD","user")=="user" or setting("CASEVAULT_ADMIN_PASSWORD","admin")=="admin":
+            st.warning("Temporary default credentials are active: user/user and admin/admin. Change both passwords in Streamlit Secrets before clinical use.")
         if not drive_configured():st.warning("GOOGLE_DRIVE_ROOT_FOLDER_ID belum diisi.")
+        if not archive_token_configured():
+            st.warning("Archive account belum terhubung. Lakukan sekali sebagai admin; pengguna lain tetap login dengan password CaseVault.")
+            if user.get("role")=="admin":
+                if not archive_oauth_configured():st.error("Tambahkan GOOGLE_CLIENT_ID dan GOOGLE_CLIENT_SECRET ke Streamlit Secrets terlebih dahulu.")
+                else:begin_archive_connect()
+        else:
+            st.success("Archive account connected. Patient folders and uploads use the configured Google Drive automatically.")
+        generated=st.session_state.get("generated_archive_refresh_token")
+        if generated and user.get("role")=="admin":
+            st.error("One final setup step: copy the secret below into Streamlit App → Settings → Secrets, then save. Treat this token like a password.")
+            st.code(f'GOOGLE_ARCHIVE_REFRESH_TOKEN = "{generated}"',language="toml",wrap_lines=True)
+        if st.button("SIGN OUT OF CASEVAULT"):
+            for key in ("app_user","selected_patient_id","parsed","saved","pasted_photos","generated_archive_refresh_token","archive_google_credentials"):st.session_state.pop(key,None)
+            st.rerun()
     else:st.markdown(f"[Sign in with Google]({API}/auth/login)")
-    st.info("CaseVault never creates public sharing links and sends no clinical data to AI services. Google Drive is the source of truth for the cloud deployment.")
+    st.info("CaseVault never creates public sharing links and sends no clinical data to AI services. The archive Google account is the Drive identity; app users never grant personal Drive access.")
 
 page=sidebar()
-if EMBEDDED_MODE and oauth_configured() and not st.session_state.get("google_user"):
-    left,center,right=st.columns([1,1.25,1])
-    with center:
-        st.markdown('<div style="height:8vh"></div><div class="cv-brand" style="justify-content:center"><div class="cv-logo" style="color:#102330;border-color:#68818a">OM</div><div><strong style="color:#102330">CaseVault</strong><span style="color:#6e7678">OMFS Surgical Case Atlas</span></div></div>',unsafe_allow_html=True)
-        with st.container(border=True):
-            st.markdown("## Welcome back")
-            st.caption("Sign in with an authorized Google account to open the Drive-backed case archive.")
-            begin_google_login()
-            st.markdown('<div class="cv-meta" style="text-align:center;margin-top:.8rem">Private by default · No public links · No clinical AI processing</div>',unsafe_allow_html=True)
+if EMBEDDED_MODE and not st.session_state.get("app_user"):
+    login_screen()
 else:
     {"＋  Case intake":quick_upload,"◫  Case registry":patients,"⌕  Atlas index":search,"⚙  Archive control":settings_page}[page]()
