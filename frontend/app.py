@@ -1,7 +1,11 @@
 from __future__ import annotations
 import os
+import sys
+from pathlib import Path
 import httpx
 import streamlit as st
+
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
 try:
     _embedded_default=st.secrets.get("EMBEDDED_MODE","false")
