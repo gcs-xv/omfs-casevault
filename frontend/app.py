@@ -1,9 +1,16 @@
 from __future__ import annotations
 import os
 import sys
+import io
+import secrets
 from pathlib import Path
 import httpx
 import streamlit as st
+from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2 import id_token
+from google_auth_oauthlib.flow import Flow
+from PIL import Image
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
@@ -15,12 +22,62 @@ EMBEDDED_MODE=str(os.getenv("EMBEDDED_MODE",_embedded_default)).lower()=="true"
 if EMBEDDED_MODE:
     from sqlalchemy import select
     from backend.core.database import Base, SessionLocal, engine
-    from backend.models import Patient
+    from backend.models import Episode, Media, Patient, Visit
     from backend.services.case_service import save_visit, search_cases
+    from backend.services.drive_service import DriveService
     from backend.services.soap_parser import parse_soap
+    from backend.utils.normalization import safe_name
     Base.metadata.create_all(engine)
 
 API=os.getenv("API_URL","http://127.0.0.1:8000")
+APP_URL="https://omfs-casevault-dj7trsufq6jykaeuddo7b4.streamlit.app/oauth2callback"
+DRIVE_SCOPE="https://www.googleapis.com/auth/drive"
+
+def setting(name,default=""):
+    value=os.getenv(name)
+    if value is not None:return value
+    try:return st.secrets.get(name,default)
+    except FileNotFoundError:return default
+
+def oauth_configured():
+    return bool(setting("GOOGLE_CLIENT_ID") and setting("GOOGLE_CLIENT_SECRET"))
+
+def drive_configured():
+    return bool(setting("GOOGLE_DRIVE_ROOT_FOLDER_ID"))
+
+def oauth_flow(state=None):
+    config={"web":{"client_id":setting("GOOGLE_CLIENT_ID"),"client_secret":setting("GOOGLE_CLIENT_SECRET"),"auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","redirect_uris":[setting("GOOGLE_REDIRECT_URI",APP_URL)]}}
+    return Flow.from_client_config(config,scopes=["openid","email","profile",DRIVE_SCOPE],state=state,redirect_uri=setting("GOOGLE_REDIRECT_URI",APP_URL))
+
+def state_signer():
+    return URLSafeTimedSerializer(setting("SESSION_SECRET","casevault-change-me"),salt="casevault-google-oauth")
+
+def begin_google_login():
+    state=state_signer().dumps({"nonce":secrets.token_urlsafe(18)})
+    url,_=oauth_flow(state).authorization_url(access_type="offline",prompt="consent",include_granted_scopes="true")
+    st.link_button("SIGN IN WITH GOOGLE",url,type="primary",use_container_width=True)
+
+def finish_google_login():
+    code=st.query_params.get("code");state=st.query_params.get("state")
+    if not code:return
+    try:
+        state_signer().loads(state,max_age=600)
+        flow=oauth_flow(state);flow.fetch_token(code=code)
+        info=id_token.verify_oauth2_token(flow.credentials.id_token,GoogleRequest(),setting("GOOGLE_CLIENT_ID"))
+        allowed={x.strip().lower() for x in setting("ALLOWED_GOOGLE_EMAILS").split(",") if x.strip()}
+        if allowed and info.get("email","").lower() not in allowed:raise PermissionError("Akun Google ini tidak diizinkan.")
+        st.session_state.google_credentials=flow.credentials
+        st.session_state.google_user={"email":info["email"],"name":info.get("name",info["email"])}
+        st.query_params.clear();st.rerun()
+    except (BadSignature,SignatureExpired):st.error("Login kedaluwarsa atau tidak valid. Silakan login ulang.")
+    except Exception as exc:st.error(f"Google login gagal: {exc}")
+
+def current_credentials():
+    credentials=st.session_state.get("google_credentials")
+    if credentials and credentials.expired and credentials.refresh_token:credentials.refresh(GoogleRequest())
+    return credentials
+
+finish_google_login()
 st.set_page_config(page_title="OMFS CaseVault",page_icon="🗂️",layout="wide",initial_sidebar_state="expanded")
 if st.query_params.get("session_token"):
     st.session_state.api_session_token=st.query_params["session_token"]
@@ -46,7 +103,7 @@ def api(method,path,**kwargs):
 
 def embedded_api(method,path,**kwargs):
     """Single-process demo adapter for Streamlit Community Cloud."""
-    if path=="/health":return {"status":"ok","auth_configured":False,"drive_configured":False,"mode":"private demo"}
+    if path=="/health":return {"status":"ok","auth_configured":oauth_configured(),"drive_configured":drive_configured(),"signed_in":bool(st.session_state.get("google_user")),"mode":"Streamlit Cloud"}
     if path=="/parser/soap":return parse_soap(kwargs["json"]["soap"])
     with SessionLocal() as db:
         if path=="/patients":
@@ -58,8 +115,33 @@ def embedded_api(method,path,**kwargs):
             patient,episode,visit=save_visit(db,kwargs["json"],"streamlit-demo")
             return {"patient_id":patient.id,"episode_id":episode.id,"visit_id":visit.id,"save_state":"demo_saved"}
         if method=="POST" and path.endswith("/media"):
-            st.warning("Photo/Drive upload belum aktif pada deployment demo. File tidak diunggah.")
-            return {"uploaded":[],"failed":[],"save_state":"demo_saved"}
+            credentials=current_credentials()
+            if not credentials:raise ValueError("Silakan login dengan Google sebelum upload ke Drive.")
+            visit_id=path.split("/")[2];visit=db.get(Visit,visit_id)
+            if not visit:raise ValueError("Visit not found")
+            patient=db.get(Patient,visit.patient_id);episode=db.get(Episode,visit.episode_id)
+            drive=DriveService(credentials,setting("GOOGLE_DRIVE_ROOT_FOLDER_ID"))
+            if not patient.drive_folder_id:
+                x=drive.create_folder(f"{patient.medical_record_number} - {patient.full_name}",drive.root_id);patient.drive_folder_id=x.id;patient.drive_folder_url=x.url
+            if not episode.drive_folder_id:
+                x=drive.create_folder(f"{episode.episode_number} - {episode.title}",patient.drive_folder_id);episode.drive_folder_id=x.id;episode.drive_folder_url=x.url
+            if not visit.drive_folder_id:
+                pod=f"POD {visit.pod_roman} ({visit.pod_number})" if visit.pod_number is not None else visit.visit_type
+                x=drive.create_folder(f"{visit.visit_date.isoformat()} - {pod}",episode.drive_folder_id);visit.drive_folder_id=x.id;visit.drive_folder_url=x.url
+                drive.upload_bytes("SOAP.txt",visit.original_soap.encode(),"text/plain",visit.drive_folder_id)
+            uploaded=[];failed=[];start=len(visit.media)
+            for i,(_,file_tuple) in enumerate(kwargs.get("files",[]),start+1):
+                filename,data,mime=file_tuple
+                try:
+                    if mime not in {"image/jpeg","image/png","image/webp"}:raise ValueError("unsupported format")
+                    width,height=Image.open(io.BytesIO(data)).size
+                    ext={"image/jpeg":"jpg","image/png":"png","image/webp":"webp"}[mime];pod=f"POD{visit.pod_number:03d}" if visit.pod_number is not None else "VISIT"
+                    stored=f"{patient.medical_record_number_normalized}_{episode.episode_number}_{visit.visit_date.strftime('%Y%m%d')}_{pod}_{i:03d}.{ext}"
+                    item=drive.upload_bytes(stored,data,mime,visit.drive_folder_id)
+                    db.add(Media(visit_id=visit.id,drive_file_id=item.id,drive_url=item.url,original_filename=safe_name(filename),stored_filename=stored,mime_type=mime,file_size=len(data),width=width,height=height,sequence_number=i,uploaded_by=st.session_state.google_user["email"]));uploaded.append(stored)
+                except Exception as exc:failed.append({"file":filename,"error":str(exc)})
+            visit.save_state="complete" if not failed else "partial_failure";db.commit()
+            return {"uploaded":uploaded,"failed":failed,"save_state":visit.save_state,"drive_url":visit.drive_folder_url}
     raise ValueError(f"Unsupported embedded route: {method} {path}")
 
 def sidebar():
@@ -70,6 +152,8 @@ def sidebar():
     if health:
         st.sidebar.caption("● Service connected")
         if not health["auth_configured"]:st.sidebar.warning("Google OAuth needs setup")
+        elif EMBEDDED_MODE and st.session_state.get("google_user"):
+            st.sidebar.success(f"Google: {st.session_state.google_user['email']}")
     return page
 
 def preview(d):
@@ -132,9 +216,21 @@ def search():
 def settings_page():
     st.markdown("# Settings & setup")
     h=api("GET","/health") or {};st.json(h)
-    if EMBEDDED_MODE:st.info("Private demo mode · Google OAuth and Drive will be enabled after the final URL is assigned.")
+    if EMBEDDED_MODE:
+        if not oauth_configured():st.warning("Tambahkan GOOGLE_CLIENT_ID dan GOOGLE_CLIENT_SECRET ke Streamlit Secrets.")
+        elif not st.session_state.get("google_user"):begin_google_login()
+        else:
+            st.success(f"Terhubung sebagai {st.session_state.google_user['email']}")
+            if st.button("SIGN OUT"):st.session_state.pop("google_credentials",None);st.session_state.pop("google_user",None);st.rerun()
+        if not drive_configured():st.warning("GOOGLE_DRIVE_ROOT_FOLDER_ID belum diisi.")
     else:st.markdown(f"[Sign in with Google]({API}/auth/login)")
     st.info("OAuth uses Drive's app-created-files scope. CaseVault never creates public sharing links and sends no clinical data to AI services.")
 
 page=sidebar()
-{"Quick Upload":quick_upload,"Patients":patients,"Search":search,"Settings":settings_page}[page]()
+if EMBEDDED_MODE and oauth_configured() and not st.session_state.get("google_user"):
+    st.markdown("# Sign in to CaseVault")
+    st.caption("Gunakan akun Google yang diizinkan untuk membuka arsip dan menghubungkan Google Drive.")
+    begin_google_login()
+    st.info("CaseVault meminta akses Drive karena folder tujuan sudah ada. Tidak ada file yang dibuat publik.")
+else:
+    {"Quick Upload":quick_upload,"Patients":patients,"Search":search,"Settings":settings_page}[page]()
