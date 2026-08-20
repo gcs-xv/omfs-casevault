@@ -141,27 +141,35 @@ def login_screen():
                     st.error("Username atau password salah.")
             st.markdown('<div class="cv-meta" style="text-align:center;margin-top:.8rem">Private archive · Password protected · No Google sign-in</div>',unsafe_allow_html=True)
 
-def list_drive_folders(drive,parent_id:str)->list[dict]:
+@st.cache_data(ttl=60,show_spinner=False)
+def list_drive_folders(_drive,parent_id:str)->list[dict]:
     """Hot-reload-safe folder listing; works even if Streamlit cached an older service module."""
+    drive=_drive
     if hasattr(drive,"list_folders"):return drive.list_folders(parent_id)
     folder_mime="application/vnd.google-apps.folder"
     q=f"'{parent_id}' in parents and mimeType = '{folder_mime}' and trashed = false"
     result=drive.api.files().list(q=q,pageSize=1000,fields="files(id,name,webViewLink,createdTime,modifiedTime)",orderBy="name_natural",supportsAllDrives=True,includeItemsFromAllDrives=True).execute()
     return result.get("files",[])
 
-def list_drive_files(drive,parent_id:str)->list[dict]:
+@st.cache_data(ttl=90,show_spinner=False)
+def list_drive_files(_drive,parent_id:str)->list[dict]:
+    drive=_drive
     if hasattr(drive,"list_files"):return drive.list_files(parent_id)
     folder_mime="application/vnd.google-apps.folder"
     q=f"'{parent_id}' in parents and mimeType != '{folder_mime}' and trashed = false"
     result=drive.api.files().list(q=q,pageSize=1000,fields="files(id,name,mimeType,size,webViewLink,createdTime,modifiedTime)",orderBy="name_natural",supportsAllDrives=True,includeItemsFromAllDrives=True).execute()
     return result.get("files",[])
 
-def download_drive_bytes(drive,file_id:str)->bytes:
+@st.cache_data(ttl=600,max_entries=256,show_spinner=False)
+def download_drive_bytes(_drive,file_id:str)->bytes:
+    drive=_drive
     if hasattr(drive,"download_bytes"):return drive.download_bytes(file_id)
     return drive.api.files().get_media(fileId=file_id,supportsAllDrives=True).execute()
 
-def list_drive_visit_metadata(drive)->list[dict]:
+@st.cache_data(ttl=90,show_spinner=False)
+def list_drive_visit_metadata(_drive,root_id:str)->list[dict]:
     """Read metadata even when Streamlit still holds an older DriveService class."""
+    drive=_drive
     if hasattr(drive,"list_visit_metadata"):return drive.list_visit_metadata()
     q="name = 'casevault-metadata.json' and trashed = false"
     result=drive.api.files().list(q=q,pageSize=1000,fields="files(id,parents)",supportsAllDrives=True,includeItemsFromAllDrives=True).execute()
@@ -169,11 +177,14 @@ def list_drive_visit_metadata(drive)->list[dict]:
     for item in result.get("files",[]):
         try:
             payload=json.loads(drive.api.files().get_media(fileId=item["id"],supportsAllDrives=True).execute().decode("utf-8"))
-            if payload.get("casevault_root_id")==drive.root_id:
+            if payload.get("casevault_root_id")==root_id:
                 payload["metadata_file_id"]=item["id"];rows.append(payload)
         except Exception:
             continue
     return rows
+
+def clear_drive_cache():
+    list_drive_folders.clear();list_drive_files.clear();download_drive_bytes.clear();list_drive_visit_metadata.clear()
 
 def drive_patients():
     drive=drive_service()
@@ -267,6 +278,7 @@ def save_visit_to_drive(data:dict,photos:list)->dict:
         except Exception as exc:failed.append({"file":file.name,"error":str(exc)})
     metadata={"schema_version":2,"casevault_root_id":drive.root_id,"patient":patient,"patient_folder_id":patient_folder_id,"patient_drive_url":patient_drive_url,"episode":episode,"episode_folder_id":episode_folder_id,"visit":{**visit,"visit_sequence":visit_sequence},"visit_folder_id":visit_folder.id,"visit_drive_url":visit_folder.url,"diagnoses":data.get("diagnoses",[]),"procedures":data.get("procedures",[]),"roles":roles,"soap":data.get("soap",{}),"attachments":attachments,"search_blob":search_blob,"saved_at":datetime.utcnow().isoformat()+"Z","saved_by":st.session_state.app_user["username"],"saved_by_role":st.session_state.app_user["role"]}
     drive.upload_bytes("casevault-metadata.json",json.dumps(metadata,ensure_ascii=False,indent=2).encode("utf-8"),"application/json",visit_folder.id,{"casevault_root":drive.root_id,"casevault_type":"visit_metadata"})
+    clear_drive_cache()
     return {"uploaded":uploaded,"failed":failed,"drive_url":visit_folder.url,"patient_drive_url":patient_drive_url,"visit_sequence":visit_sequence,"patient_match":identity_match.get("match_type","new"),"save_state":"complete" if not failed else "partial_failure"}
 
 st.set_page_config(page_title="OMFS CaseVault · Surgical Case Atlas",page_icon="🦷",layout="wide",initial_sidebar_state="auto")
@@ -288,7 +300,7 @@ html,body,[class*="css"]{font-family:Inter,-apple-system,BlinkMacSystemFont,"Seg
 .cv-steps{position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin:.2rem 0 1.35rem;border:1px solid var(--atlas-rule);background:var(--atlas-paper)}.cv-step{position:relative;display:flex;align-items:center;gap:.75rem;padding:.85rem 1rem;color:#768084;border-right:1px solid var(--atlas-rule);font-size:.78rem;letter-spacing:.04em;text-transform:uppercase}.cv-step:last-child{border-right:0}.cv-step b{font-family:Georgia,"Times New Roman",serif;font-size:1.2rem;font-weight:500;color:#a1a29d}.cv-step.active{color:var(--atlas-ink);background:#edf3f3}.cv-step.active:after{content:"";position:absolute;inset:auto 0 -1px;height:3px;background:var(--atlas-coral)}.cv-step.active b{color:var(--atlas-coral)}.cv-step.done{background:#f7f4ed;color:#59686b}.cv-step.done b{color:var(--atlas-blue)}
 .cv-note{position:relative;overflow:hidden;background:var(--atlas-navy);border-left:5px solid var(--atlas-coral);padding:1.55rem 1.45rem;color:#eae7df;min-height:220px;box-shadow:9px 12px 0 #d8d1c3}.cv-note:after{content:"01";position:absolute;right:-.15rem;bottom:-2.2rem;font-family:Georgia,"Times New Roman",serif;font-size:8rem;color:#fff;opacity:.035}.cv-note .num{font-size:.6rem;letter-spacing:.2em;text-transform:uppercase;color:#91bac7}.cv-note h3{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:1.5rem;color:#fff;margin:.65rem 0}.cv-note p{color:#b9c6c8;font-size:.88rem;line-height:1.5}.cv-note ul{padding-left:1.05rem;color:#d9dcd7;font-size:.8rem;line-height:1.7}
 .cv-avatar{width:46px;height:46px;border:1px solid #9fb4b8;background:#e5eded;color:var(--atlas-blue);display:grid;place-items:center;font-family:Georgia,"Times New Roman",serif;font-weight:700;letter-spacing:.04em}.cv-meta{color:var(--atlas-muted);font-size:.78rem;line-height:1.45;margin-top:.22rem}.cv-pill{display:inline-block;padding:.21rem .48rem;border:1px solid #b8c7c7;background:transparent;color:#47666e;font-size:.59rem;font-weight:750;letter-spacing:.075em;text-transform:uppercase;margin:.18rem .25rem .08rem 0}.cv-empty{text-align:center;padding:3.4rem 1rem;background:var(--atlas-paper);border:1px dashed #aaa89f;color:var(--atlas-muted)}.cv-empty .icon{font-family:Georgia,"Times New Roman",serif;font-size:2.4rem;color:var(--atlas-blue);margin-bottom:.6rem}.cv-section-title{font-family:Georgia,"Times New Roman",serif;font-size:1.22rem;color:var(--atlas-ink);margin:.15rem 0 .2rem}.cv-section-sub{color:var(--atlas-muted);font-size:.78rem;line-height:1.5;margin-bottom:.9rem}
-.cv-record-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem;margin:.15rem 0 .75rem}.cv-record-fact{min-height:66px;padding:.62rem .7rem;background:#f7f4ed;border:1px solid #d7d1c5}.cv-record-fact b{display:block;color:#698087;font-size:.55rem;letter-spacing:.13em;text-transform:uppercase;margin-bottom:.3rem}.cv-record-fact span{display:block;color:#263b44;font-size:.78rem;line-height:1.35;max-height:3.25em;overflow:auto}.cv-soap-scroll{height:min(46vh,430px);min-height:260px;overflow:auto;padding:1rem 1.05rem;background:#f8f6f0;border:1px solid #d4cec2;color:#263b44;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;line-height:1.55;white-space:pre-wrap}.cv-viewer-note{font-size:.7rem;color:var(--atlas-muted);margin:.25rem 0 .7rem}.cv-photo-name{font-family:Georgia,"Times New Roman",serif;font-size:.82rem;color:var(--atlas-ink);overflow-wrap:anywhere;margin:.25rem 0}[data-testid="stImage"] img{max-height:34vh;object-fit:contain;background:#eef1ef}
+.cv-record-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem;margin:.15rem 0 .75rem}.cv-record-fact{min-height:66px;padding:.62rem .7rem;background:#f7f4ed;border:1px solid #d7d1c5}.cv-record-fact b{display:block;color:#698087;font-size:.55rem;letter-spacing:.13em;text-transform:uppercase;margin-bottom:.3rem}.cv-record-fact span{display:block;color:#263b44;font-size:.78rem;line-height:1.35;max-height:3.25em;overflow:auto}.cv-soap-scroll{height:min(46vh,430px);min-height:260px;overflow:auto;padding:1rem 1.05rem;background:#f8f6f0;border:1px solid #d4cec2;color:#263b44;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;line-height:1.55;white-space:pre-wrap}.cv-viewer-note{font-size:.7rem;color:var(--atlas-muted);margin:.25rem 0 .7rem}.cv-photo-name{font-family:Georgia,"Times New Roman",serif;font-size:.82rem;color:var(--atlas-ink);overflow-wrap:anywhere;margin:.25rem 0}[data-testid="stImage"] img{max-height:34vh;object-fit:contain;background:#eef1ef}.cv-drive-link{width:32px;height:32px;display:inline-grid;place-items:center;border:1px solid #c7c3b9;background:#fffdf8;transition:.16s;cursor:pointer}.cv-drive-link:hover{transform:translateY(-1px);border-color:var(--atlas-blue);background:#edf3f3}.cv-drive-link svg{width:18px;height:18px;display:block}
 .cv-profile{display:flex;align-items:center;gap:1rem;padding:.35rem 0 .75rem}.cv-profile .cv-avatar{width:62px;height:62px;font-size:1.16rem}.cv-profile h2{font-family:Georgia,"Times New Roman",serif;font-weight:500;margin:0;font-size:1.65rem}.cv-episode-head{display:flex;align-items:center;gap:1rem;padding:.2rem 0 .7rem}.cv-case-no{min-width:56px;font-family:Georgia,"Times New Roman",serif;font-size:2.35rem;line-height:1;color:var(--atlas-coral);border-right:1px solid var(--atlas-rule);padding-right:.8rem}.cv-episode-title{font-family:Georgia,"Times New Roman",serif;font-size:1.22rem;font-weight:500;color:var(--atlas-ink)}.cv-episode-meta{font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;color:var(--atlas-muted);margin-top:.28rem}.cv-visit{position:relative;border-left:1px solid var(--atlas-blue);padding:.15rem 0 .15rem 1.25rem;margin:.65rem 0 1.1rem}.cv-visit:before{content:"";position:absolute;left:-5px;top:.45rem;width:9px;height:9px;border:2px solid var(--atlas-paper);background:var(--atlas-coral);box-shadow:0 0 0 1px var(--atlas-coral)}.cv-visit-title{font-family:Georgia,"Times New Roman",serif;font-size:1.02rem;color:var(--atlas-ink)}.cv-field{margin:.58rem 0}.cv-field b{display:block;color:#698087;font-size:.57rem;letter-spacing:.14em;text-transform:uppercase;margin-bottom:.18rem}.cv-field span{color:#263b44;font-size:.82rem;line-height:1.48}.cv-card-folio{color:var(--atlas-coral);font-family:Georgia,"Times New Roman",serif;font-size:.66rem;letter-spacing:.13em;text-transform:uppercase;border-bottom:1px solid #d8d2c6;padding-bottom:.45rem;margin-bottom:.75rem}
 [data-testid="stVerticalBlockBorderWrapper"]{background:rgba(255,253,248,.94);border-color:#cdc7ba!important;border-radius:2px!important;box-shadow:2px 3px 0 #d9d2c5;transition:transform .18s ease,border-color .18s ease}[data-testid="stVerticalBlockBorderWrapper"]:hover{border-color:#9d9a92!important}
 [data-baseweb="input"]>div,[data-baseweb="textarea"]>div,[data-baseweb="select"]>div{border-color:#bdb9ae!important;border-radius:2px!important;background:#fffefb!important;box-shadow:none!important}input,textarea{color:var(--atlas-ink)!important}input:focus,textarea:focus{caret-color:var(--atlas-coral)}
@@ -340,6 +352,11 @@ def show_optional_field(label:str,values):
     values=compact_values(values)
     if values:st.markdown(f'<div class="cv-field"><b>{escape(label)}</b><span>{escape(" · ".join(values))}</span></div>',unsafe_allow_html=True)
 
+def drive_icon_link(url:str|None,label:str="Open in Google Drive"):
+    if not url:return
+    icon='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#0F9D58" d="M8.2 2h5.1l7.8 13.5h-5.2z"/><path fill="#4285F4" d="M5.5 16h15.6l-2.6 4.5H2.9z"/><path fill="#F4B400" d="M8.2 2l2.6 4.5-7.9 14H2.8L.3 16z"/></svg>'
+    st.markdown(f'<a class="cv-drive-link" href="{escape(url,quote=True)}" target="_blank" rel="noopener noreferrer" title="{escape(label,quote=True)}" aria-label="{escape(label,quote=True)}">{icon}</a>',unsafe_allow_html=True)
+
 def render_visit_contents(drive,visit_folder:dict,row:dict|None,key_prefix:str):
     row=row or {};roles=row.get("roles",{})
     try:
@@ -376,7 +393,7 @@ def render_visit_contents(drive,visit_folder:dict,row:dict|None,key_prefix:str):
                             st.image(data,use_container_width=True)
                             st.markdown(f'<div class="cv-photo-name">{escape(item.get("name") or "Clinical photo")}</div>',unsafe_allow_html=True)
                             st.download_button("DOWNLOAD",data,file_name=item.get("name") or f"clinical-photo-{index+1}.jpg",mime=item.get("mimeType") or "application/octet-stream",key=f"photo_download_{key_prefix}_{item['id']}",use_container_width=True)
-                            if item.get("webViewLink"):st.link_button("OPEN IN DRIVE  ↗",item["webViewLink"],use_container_width=True)
+                            drive_icon_link(item.get("webViewLink"),"Open photo in Google Drive")
                         except Exception as exc:st.warning(f"{item.get('name','Photo')}: {exc}")
 
 def api(method,path,**kwargs):
@@ -475,7 +492,7 @@ def quick_upload():
         with st.container(border=True):
             a,b=st.columns([4,1]);a.success(f"Visit saved to Drive · {x['name']} · RM {x['rm']} · {x['phase']}")
             if x.get("patient_match") in {"exact_rm","identity_typo"}:a.caption("Matched to the existing patient folder"+(" · minor identity typo tolerated" if x["patient_match"]=="identity_typo" else " · RM verified"))
-            if x.get("drive_url"):b.link_button("OPEN FOLDER ↗",x["drive_url"],use_container_width=True)
+            drive_icon_link(x.get("drive_url"),"Open saved folder in Google Drive")
             if x.get("failed"):st.warning(f"{len(x['failed'])} photo(s) failed. Re-select those files to retry.")
         if st.button("＋  START ANOTHER VISIT"):
             for key in ("parsed","saved","soap_input","pasted_photos"):st.session_state.pop(key,None)
@@ -539,7 +556,7 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
     with st.container(border=True):
         left,right=st.columns([4,1])
         left.markdown(f'<div class="cv-profile"><div class="cv-avatar">{initials(name)}</div><div><h2>{escape(name)}</h2><div class="cv-meta">Patient identity</div></div></div>',unsafe_allow_html=True)
-        if patient.get("drive_url"):right.link_button("OPEN PATIENT DRIVE  ↗",patient["drive_url"],use_container_width=True)
+        drive_icon_link(patient.get("drive_url"),"Open patient folder in Google Drive")
         details=[("Title",title),("Gender",sex),("Age",f"{age} {age_unit}" if age is not None else None),("Care setting",care_setting),("Hospital",hospital),("Insurance",insurance),("RM",rm)]
         st.markdown("".join(f'<span class="cv-pill"><b>{escape(label)}</b> · {escape(str(value))}</span>' for label,value in details if value),unsafe_allow_html=True)
 
@@ -564,7 +581,7 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
         with st.container(border=True):
             head,open_col=st.columns([4,1])
             head.markdown(f'<div class="cv-episode-head"><div class="cv-case-no">{episode_folio}</div><div><div class="cv-episode-title">{escape(episode_folder.get("name") or "Episode")}</div><div class="cv-episode-meta">{len(visit_folders)} Drive visit folder(s) · {len(episode_rows)} indexed visit(s)</div></div></div>',unsafe_allow_html=True)
-            if episode_folder.get("webViewLink"):open_col.link_button("OPEN EPISODE  ↗",episode_folder["webViewLink"],use_container_width=True)
+            drive_icon_link(episode_folder.get("webViewLink"),"Open episode folder in Google Drive")
             summary_cols=st.columns(2)
             with summary_cols[0]:show_optional_field("Procedures / case",procedures)
             with summary_cols[1]:show_optional_field("Diagnoses",diagnoses)
@@ -578,7 +595,7 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
                 if not visit_title:visit_title=visit_folder.get("name") or "Visit"
                 with st.expander(f"{visit_title} - Open record"):
                     title_col,visit_link=st.columns([4,1]);title_col.markdown(f'<div class="cv-meta">Drive folder · {escape(visit_folder.get("name") or "Visit")}</div>',unsafe_allow_html=True)
-                    if visit_folder.get("webViewLink"):visit_link.link_button("OPEN VISIT  ↗",visit_folder["webViewLink"],use_container_width=True)
+                    drive_icon_link(visit_folder.get("webViewLink"),"Open visit folder in Google Drive")
                     render_visit_contents(drive,visit_folder,row,f"{episode_folder['id']}_{visit_folder['id']}")
             for row in episode_rows:
                 if row.get("visit_folder_id") in drive_visit_ids:continue
@@ -603,7 +620,7 @@ def patient_detail(patient:dict,metadata_rows:list[dict]):
 def patients():
     try:
         if EMBEDDED_MODE:
-            drive=drive_service();rows=[patient_from_folder(x) for x in list_drive_folders(drive,drive.root_id)];metadata_rows=list_drive_visit_metadata(drive)
+            drive=drive_service();rows=[patient_from_folder(x) for x in list_drive_folders(drive,drive.root_id)];metadata_rows=list_drive_visit_metadata(drive,drive.root_id)
         else:rows=api("GET","/patients") or [];metadata_rows=[]
     except Exception as exc:st.error(f"Drive read failed: {exc}");return
     selected=st.session_state.get("selected_patient_id")
@@ -613,7 +630,7 @@ def patients():
         st.session_state.pop("selected_patient_id",None)
     page_header("Case registry · Master index","Surgical dossiers","Browse the living archive by patient, then open a dossier to trace every episode and operative visit.")
     search_col,sync_col=st.columns([5,1]);q=search_col.text_input("Filter patients",placeholder="Search name or medical record number…",label_visibility="collapsed")
-    if sync_col.button("↻  SYNC",use_container_width=True):st.rerun()
+    if sync_col.button("↻  SYNC",use_container_width=True):clear_drive_cache();st.rerun()
     if q:rows=[p for p in rows if q.casefold() in f"{p.get('folder_name','')} {p.get('rm','')}".casefold()]
     st.markdown(f'<div class="cv-section-sub">{len(rows)} Drive patient folder(s) · synced just now</div>',unsafe_allow_html=True)
     if not rows:st.markdown('<div class="cv-empty"><div class="icon">◫</div><b>No patient folders found</b><br>Try another search or sync Drive again.</div>',unsafe_allow_html=True);return
@@ -639,7 +656,7 @@ def search():
         st.markdown('<div class="cv-empty"><div class="icon">⌕</div><b>Search across structured Drive metadata</b><br>New CaseVault uploads are indexed by clinical and care-team fields.</div>',unsafe_allow_html=True);return
     if q and EMBEDDED_MODE:
         try:
-            with st.spinner("Searching Drive metadata…"):drive=drive_service();patient_rows=drive_patients();rows=search_catalog(patient_rows,list_drive_visit_metadata(drive),q)
+            with st.spinner("Searching Drive metadata…"):drive=drive_service();patient_rows=drive_patients();rows=search_catalog(patient_rows,list_drive_visit_metadata(drive,drive.root_id),q)
             st.caption(f"{len(rows)} result(s) for “{q}”")
             for row in rows:
                 patient=row.get("patient",{});roles=row.get("roles",{})
@@ -650,7 +667,7 @@ def search():
                         labels=[f"DPJP · {roles['dpjp']}" if roles.get("dpjp") else None,f"Operator · {roles['operator']}" if roles.get("operator") else None]
                         a.markdown("".join(f'<span class="cv-pill">{escape(x)}</span>' for x in labels if x),unsafe_allow_html=True)
                     url=row.get("visit_drive_url") or row.get("patient_drive_url")
-                    if url:b.link_button("OPEN  ↗",url,use_container_width=True)
+                    drive_icon_link(url,"Open search result in Google Drive")
             if not rows:st.info("No matching Drive metadata. Legacy folders without SOAP metadata can only be searched by patient folder name or RM.")
         except Exception as exc:st.error(f"Drive search failed: {exc}")
     elif q:
