@@ -73,11 +73,16 @@ def local_status(obj:str)->tuple[str|None,str|None]:
     io=re.search(r"(?is)(?:^|\n)\s*(?:I\s*\.?\s*O|IO|Intra\s*Oral|Intraoral)\s*:\s*(.*?)(?=\n\s*(?:A|P|Izin usul|Residen|DPJP)\s*:|\Z)",obj)
     return clean_block(eo[1]) if eo else None, clean_block(io[1]) if io else None
 
-def parse_people(text:str)->tuple[list[str],str|None]:
+def split_clinicians(value:str|None)->list[str]:
+    return [x.strip() for x in re.split(r",\s*(?=(?:drg\.|Dr\.|[A-Z]))",value or "") if x.strip()]
+
+def parse_people(text:str)->tuple[list[str],str|None,str|None,list[str]]:
     rm=re.search(r"(?im)^\s*Residen\s*:\s*(.+)$",text); residents=[]
-    if rm: residents=[x.strip() for x in re.split(r",\s*(?=drg\.)",rm[1]) if x.strip()]
+    if rm: residents=split_clinicians(rm[1])
     dm=re.search(r"(?im)^\s*(?:DPJP|Dokter Penanggung Jawab)\s*:\s*(.+)$",text)
-    return residents,dm[1].strip() if dm else None
+    om=re.search(r"(?im)^\s*Operator\s*:\s*(.+)$",text)
+    am=re.search(r"(?im)^\s*(?:Asisten Operator|Assistant Operator)\s*:\s*(.+)$",text)
+    return residents,dm[1].strip() if dm else None,om[1].strip() if om else None,split_clinicians(am[1] if am else None)
 
 def assessment_parts(value:str)->tuple[list[str],list[str],str|None]:
     flat=clean_block(value); anesthesia="General Anesthesia" if re.search(r"(?i)general\s+anestesi",flat) else None
@@ -93,7 +98,7 @@ def assessment_parts(value:str)->tuple[list[str],list[str],str|None]:
 
 def parse_soap(text:str)->dict:
     original=text; sections,header_text=split_sections(text); patient=parse_header(header_text); obj=sections.get("O","")
-    eo,io=local_status(obj); residents,dpjp=parse_people(text)
+    eo,io=local_status(obj); residents,dpjp,operator,assistant_operators=parse_people(text)
     plan_full=sections.get("P",""); proposal_m=re.search(r"(?is)\bIzin\s+usul\s*:\s*(.*?)(?=\n\s*(?:Mohon|Terima kasih|Residen|DPJP)\b|\Z)",plan_full)
     plan=re.split(r"(?i)\n\s*Izin\s+usul\s*:",plan_full,maxsplit=1)[0]
     procedures,diagnoses,anesthesia=assessment_parts(sections.get("A",""))
@@ -101,4 +106,5 @@ def parse_soap(text:str)->dict:
     if patient["pod_number"] is not None and patient["pod_calculated"] is not None and patient["pod_number"]!=patient["pod_calculated"]: warnings.append(f"POD mismatch: Roman {patient['pod_roman']} = {patient['pod_calculated']}, entered = {patient['pod_number']}")
     for label,value in (("Medical record number",patient["medical_record_number"]),("Visit date",parse_date(text))):
         if not value:warnings.append(f"{label} not found; review before saving")
-    return {"patient":patient,"visit":{"visit_date":parse_date(text).isoformat() if parse_date(text) else None,"visit_type":"Postoperative Day" if patient["pod_roman"] else "Outpatient","pod_roman":patient["pod_roman"],"pod_number":patient["pod_number"],"location":"Rawat Jalan" if re.search(r"(?i)Rawat Jalan",text) else ("Rawat Inap" if re.search(r"(?i)Rawat Inap",text) else None),"hospital":patient["hospital"],**parse_vitals(obj),"extraoral":eo,"intraoral":io},"soap":{"subjective":clean_block(sections.get("S","")),"objective_raw":obj,"assessment":clean_block(sections.get("A","")),"plan":clean_block(plan),"plan_items":clean_block(plan).splitlines() if plan else [],"proposal":clean_block(proposal_m[1]) if proposal_m else None,"original_soap":original},"episode_candidates":[],"procedures":procedures,"diagnoses":diagnoses,"anesthesia":anesthesia,"residents":residents,"dpjp":{"full_name":dpjp} if dpjp else None,"warnings":warnings,"confidence":{"patient":0.95 if patient["medical_record_number"] else 0.5,"visit":0.95 if parse_date(text) else 0.55}}
+    phase="POD" if patient["pod_roman"] else ("Intra-op" if re.search(r"(?i)\b(intra[ -]?op|laporan operasi)\b",text) else ("Pre-op" if re.search(r"(?i)\b(pre[ -]?op|pra[ -]?operasi)\b",text) else "Terjaring"))
+    return {"patient":patient,"visit":{"visit_date":parse_date(text).isoformat() if parse_date(text) else None,"visit_type":"Postoperative Day" if patient["pod_roman"] else "Outpatient","visit_phase":phase,"pod_roman":patient["pod_roman"],"pod_number":patient["pod_number"],"location":"Rawat Jalan" if re.search(r"(?i)Rawat Jalan",text) else ("Rawat Inap" if re.search(r"(?i)Rawat Inap",text) else None),"hospital":patient["hospital"],**parse_vitals(obj),"extraoral":eo,"intraoral":io},"soap":{"subjective":clean_block(sections.get("S","")),"objective_raw":obj,"assessment":clean_block(sections.get("A","")),"plan":clean_block(plan),"plan_items":clean_block(plan).splitlines() if plan else [],"proposal":clean_block(proposal_m[1]) if proposal_m else None,"original_soap":original},"episode_candidates":[],"procedures":procedures,"diagnoses":diagnoses,"anesthesia":anesthesia,"residents":residents,"operator":operator,"assistant_operators":assistant_operators,"dpjp":{"full_name":dpjp} if dpjp else None,"warnings":warnings,"confidence":{"patient":0.95 if patient["medical_record_number"] else 0.5,"visit":0.95 if parse_date(text) else 0.55}}
