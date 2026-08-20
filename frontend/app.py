@@ -253,6 +253,7 @@ st.markdown("""<style>
 .cv-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:.65rem;margin:.2rem 0 1.35rem}.cv-step{display:flex;align-items:center;gap:.65rem;background:#fff;border:1px solid var(--line);border-radius:13px;padding:.72rem .85rem;color:#789}.cv-step b{width:27px;height:27px;border-radius:50%;display:grid;place-items:center;background:#edf3f4;color:#607785;font-size:.78rem}.cv-step.active{border-color:#72bcb5;background:#f2fbf8;color:var(--ink);box-shadow:0 6px 20px #155b4f0c}.cv-step.active b{background:var(--teal);color:#fff}.cv-step.done b{background:#d9f1eb;color:#087065}
 .cv-note{background:linear-gradient(145deg,#102d3d,#163f4b);border-radius:18px;padding:1.3rem 1.35rem;color:#eaf7f5;min-height:190px;box-shadow:0 16px 38px #16374418}.cv-note .num{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:#8ecbc3}.cv-note h3{color:white;margin:.5rem 0}.cv-note p{color:#bfd5d8;font-size:.9rem}.cv-note ul{padding-left:1.15rem;color:#d9ebec;font-size:.87rem}
 .cv-avatar{width:46px;height:46px;border-radius:14px;background:linear-gradient(145deg,#dff2ed,#cbe9e4);color:#126e68;display:grid;place-items:center;font-weight:800;letter-spacing:.04em}.cv-meta{color:var(--muted);font-size:.86rem;margin-top:.25rem}.cv-pill{display:inline-block;padding:.2rem .5rem;border-radius:999px;background:#e7f3f0;color:#176c66;font-size:.7rem;font-weight:750;margin:.15rem .25rem .1rem 0}.cv-empty{text-align:center;padding:3rem 1rem;background:#fff;border:1px dashed #cbdade;border-radius:18px;color:var(--muted)}.cv-empty .icon{font-size:2rem;margin-bottom:.6rem}.cv-section-title{font-size:1rem;font-weight:780;color:var(--ink);margin:.2rem 0 .2rem}.cv-section-sub{color:var(--muted);font-size:.84rem;margin-bottom:.8rem}
+.cv-profile{display:flex;align-items:center;gap:1rem;padding:.25rem 0 .6rem}.cv-profile .cv-avatar{width:58px;height:58px;border-radius:17px;font-size:1.05rem}.cv-profile h2{margin:0;font-size:1.45rem}.cv-episode-head{padding:.15rem 0 .55rem}.cv-episode-title{font-size:1.02rem;font-weight:800;color:var(--ink)}.cv-episode-meta{font-size:.78rem;color:var(--muted);margin-top:.18rem}.cv-visit{border-left:3px solid #8bc9c1;padding:.15rem 0 .15rem 1rem;margin:.55rem 0 1rem}.cv-visit-title{font-weight:780;color:var(--ink)}.cv-field{margin:.5rem 0}.cv-field b{display:block;color:#587080;font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.15rem}.cv-field span{color:#263e50;font-size:.88rem;line-height:1.45}
 [data-testid="stVerticalBlockBorderWrapper"]{background:rgba(255,255,255,.88);border-color:var(--line)!important;border-radius:16px!important;box-shadow:0 8px 28px #17354b08}
 [data-baseweb="input"]>div,[data-baseweb="textarea"]>div,[data-baseweb="select"]>div{border-color:#d6e2e6!important;border-radius:11px!important;background:#fff!important}input,textarea{color:var(--ink)!important}
 [data-baseweb="tab-list"]{gap:.4rem;border-bottom:1px solid var(--line)}[data-baseweb="tab"]{border-radius:9px 9px 0 0;padding:.65rem 1rem}[aria-selected="true"][data-baseweb="tab"]{color:var(--teal)!important;background:#ecf7f4}
@@ -272,6 +273,32 @@ def workflow_steps(active:int):
 def initials(name:str)->str:
     words=[x for x in name.replace(".","").split() if x]
     return "".join(x[0].upper() for x in words[-2:]) if words else "CV"
+
+def compact_values(values)->list[str]:
+    """Keep optional clinical fields concise and omit empty/duplicate values."""
+    seen=set();result=[]
+    for value in values or []:
+        value=str(value).strip()
+        if value and value.casefold() not in seen:
+            seen.add(value.casefold());result.append(value)
+    return result
+
+def patient_metadata(rows:list[dict],patient:dict)->list[dict]:
+    patient_id=patient.get("id");rm=normalize_rm(patient.get("rm"))
+    matches=[]
+    for row in rows:
+        row_rm=normalize_rm((row.get("patient") or {}).get("medical_record_number"))
+        if row.get("patient_folder_id")==patient_id or (rm and row_rm==rm):matches.append(row)
+    return sorted(matches,key=lambda x:(x.get("visit",{}).get("visit_date") or "",x.get("saved_at") or ""),reverse=True)
+
+def episode_sort_key(folder:dict):
+    number=re.match(r"(?i)^EP\s*0*(\d+)",folder.get("name", ""))
+    return (int(number.group(1)) if number else 999999,folder.get("name","").casefold())
+
+def show_optional_field(label:str,values):
+    if isinstance(values,str):values=[values]
+    values=compact_values(values)
+    if values:st.markdown(f'<div class="cv-field"><b>{escape(label)}</b><span>{escape(" · ".join(values))}</span></div>',unsafe_allow_html=True)
 
 def api(method,path,**kwargs):
     try:
@@ -415,23 +442,103 @@ def quick_upload():
             else:result=api("POST","/visits",json=st.session_state.parsed)
             if result:st.session_state.saved={**result,"name":st.session_state.parsed["patient"]["full_name"],"rm":st.session_state.parsed["patient"]["medical_record_number"],"phase":st.session_state.parsed["visit"].get("visit_phase")};st.rerun()
 
+def patient_detail(patient:dict,metadata_rows:list[dict]):
+    if st.button("←  BACK TO PATIENTS"):
+        st.session_state.pop("selected_patient_id",None);st.rerun()
+    rows=patient_metadata(metadata_rows,patient);rich_patient=(rows[0].get("patient") if rows else {}) or {}
+    name=rich_patient.get("full_name") or patient.get("name") or "Patient"
+    rm=rich_patient.get("medical_record_number") or patient.get("rm") or "—"
+    page_header("Patient case file",escape(name),"Episodes, visits, clinical index, and care team — read live from the configured Drive archive.")
+    with st.container(border=True):
+        left,right=st.columns([4,1])
+        left.markdown(f'<div class="cv-profile"><div class="cv-avatar">{initials(name)}</div><div><h2>{escape(name)}</h2><div class="cv-meta">RM {escape(rm)} · {escape(rich_patient.get("hospital") or patient.get("hospital") or "Hospital not recorded")}</div></div></div>',unsafe_allow_html=True)
+        if patient.get("drive_url"):right.link_button("OPEN PATIENT DRIVE  ↗",patient["drive_url"],use_container_width=True)
+        chips=compact_values([rich_patient.get("title"),rich_patient.get("sex") or patient.get("sex"),f"{rich_patient.get('age')} {rich_patient.get('age_unit') or 'Tahun'}" if rich_patient.get("age") else None,rich_patient.get("insurance")])
+        if chips:st.markdown("".join(f'<span class="cv-pill">{escape(x)}</span>' for x in chips),unsafe_allow_html=True)
+
+    try:
+        drive=drive_service();episodes=sorted(list_drive_folders(drive,patient["id"]),key=episode_sort_key)
+    except Exception as exc:
+        st.error(f"Episode read failed: {exc}");return
+    episode_ids={row.get("episode_folder_id") for row in rows if row.get("episode_folder_id")}
+    metadata_only=[row for row in rows if row.get("episode_folder_id") not in {x.get("id") for x in episodes}]
+    total_episode_ids={x.get("id") for x in episodes}|episode_ids
+    st.markdown(f'<div class="cv-section-sub">{len(total_episode_ids)} episode(s) · {len(rows)} indexed visit(s)</div>',unsafe_allow_html=True)
+    if not episodes and not metadata_only:
+        st.markdown('<div class="cv-empty"><div class="icon">◫</div><b>No episode folders found</b><br>This patient folder exists, but it has no readable episode data yet.</div>',unsafe_allow_html=True);return
+
+    for episode_folder in episodes:
+        episode_rows=[row for row in rows if row.get("episode_folder_id")==episode_folder.get("id")]
+        diagnoses=compact_values(x for row in episode_rows for x in row.get("diagnoses",[]))
+        procedures=compact_values(x for row in episode_rows for x in row.get("procedures",[]))
+        try:visit_folders=list_drive_folders(drive,episode_folder["id"])
+        except Exception:visit_folders=[]
+        with st.container(border=True):
+            head,open_col=st.columns([4,1])
+            head.markdown(f'<div class="cv-episode-head"><div class="cv-episode-title">{escape(episode_folder.get("name") or "Episode")}</div><div class="cv-episode-meta">{len(visit_folders)} Drive visit folder(s) · {len(episode_rows)} indexed visit(s)</div></div>',unsafe_allow_html=True)
+            if episode_folder.get("webViewLink"):open_col.link_button("OPEN EPISODE  ↗",episode_folder["webViewLink"],use_container_width=True)
+            summary_cols=st.columns(2)
+            with summary_cols[0]:show_optional_field("Procedures / case",procedures)
+            with summary_cols[1]:show_optional_field("Diagnoses",diagnoses)
+            if not visit_folders and not episode_rows:st.caption("No visit details are available inside this episode yet.")
+            drive_visit_ids={folder.get("id") for folder in visit_folders}
+            for visit_folder in sorted(visit_folders,key=lambda x:x.get("name","").casefold(),reverse=True):
+                row=next((x for x in episode_rows if x.get("visit_folder_id")==visit_folder.get("id")),None)
+                visit=(row or {}).get("visit",{});roles=(row or {}).get("roles",{})
+                phase=visit.get("visit_phase");pod=visit.get("pod_roman") or visit.get("pod_number")
+                visit_title=" · ".join(compact_values([visit.get("visit_date"),f"POD {pod}" if phase=="POD" and pod is not None else phase])) or visit_folder.get("name") or "Visit"
+                with st.container():
+                    title_col,visit_link=st.columns([4,1]);title_col.markdown(f'<div class="cv-visit"><div class="cv-visit-title">{escape(visit_title)}</div><div class="cv-meta">{escape(visit_folder.get("name") or "Drive visit folder")}</div></div>',unsafe_allow_html=True)
+                    if visit_folder.get("webViewLink"):visit_link.link_button("OPEN VISIT  ↗",visit_folder["webViewLink"],use_container_width=True)
+                    if row:
+                        info_cols=st.columns(2)
+                        with info_cols[0]:
+                            show_optional_field("Procedure",row.get("procedures",[]));show_optional_field("Diagnosis",row.get("diagnoses",[]))
+                        with info_cols[1]:
+                            show_optional_field("DPJP",roles.get("dpjp"));show_optional_field("Operator",roles.get("operator"));show_optional_field("Assistant operator",roles.get("assistant_operators",[]))
+            for row in episode_rows:
+                if row.get("visit_folder_id") in drive_visit_ids:continue
+                visit=row.get("visit",{});roles=row.get("roles",{})
+                st.markdown(f'<div class="cv-visit"><div class="cv-visit-title">{escape(visit.get("visit_date") or visit.get("visit_phase") or "Indexed visit")}</div><div class="cv-meta">Indexed metadata · Drive folder unavailable</div></div>',unsafe_allow_html=True)
+                show_optional_field("Operator",roles.get("operator"))
+
+    if metadata_only:
+        with st.expander(f"{len(metadata_only)} additional indexed visit(s)"):
+            for row in metadata_only:
+                episode=row.get("episode",{});visit=row.get("visit",{});roles=row.get("roles",{})
+                st.markdown(f"**{escape(str(episode.get('title') or 'Episode'))}** · {escape(str(visit.get('visit_date') or visit.get('visit_phase') or 'Visit'))}")
+                show_optional_field("Procedure",row.get("procedures",[]));show_optional_field("Diagnosis",row.get("diagnoses",[]));show_optional_field("Operator",roles.get("operator"))
+
 def patients():
-    page_header("Drive catalog","Patient folders","A live view of your existing Google Drive archive. Nothing here is copied into local patient storage.")
+    try:
+        if EMBEDDED_MODE:
+            drive=drive_service();rows=[patient_from_folder(x) for x in list_drive_folders(drive,drive.root_id)];metadata_rows=list_drive_visit_metadata(drive)
+        else:rows=api("GET","/patients") or [];metadata_rows=[]
+    except Exception as exc:st.error(f"Drive read failed: {exc}");return
+    selected=st.session_state.get("selected_patient_id")
+    if selected:
+        patient=next((p for p in rows if p.get("id")==selected),None)
+        if patient:patient_detail(patient,metadata_rows);return
+        st.session_state.pop("selected_patient_id",None)
+    page_header("Drive catalog","Patient folders","Open a patient to review episodes, cases, visits, diagnoses, and the care team available in Drive.")
     search_col,sync_col=st.columns([5,1]);q=search_col.text_input("Filter patients",placeholder="Search name or medical record number…",label_visibility="collapsed")
     if sync_col.button("↻  SYNC",use_container_width=True):st.rerun()
-    try:rows=drive_patients() if EMBEDDED_MODE else (api("GET","/patients") or [])
-    except Exception as exc:st.error(f"Drive read failed: {exc}");return
     if q:rows=[p for p in rows if q.casefold() in f"{p.get('folder_name','')} {p.get('rm','')}".casefold()]
     st.markdown(f'<div class="cv-section-sub">{len(rows)} Drive patient folder(s) · synced just now</div>',unsafe_allow_html=True)
     if not rows:st.markdown('<div class="cv-empty"><div class="icon">◫</div><b>No patient folders found</b><br>Try another search or sync Drive again.</div>',unsafe_allow_html=True);return
     grid=st.columns(2,gap="medium")
     for i,p in enumerate(sorted(rows,key=lambda x:x.get("name","").casefold())):
+        patient_rows=patient_metadata(metadata_rows,p);latest=patient_rows[0] if patient_rows else {};episode_count=len({x.get("episode_folder_id") or (x.get("episode") or {}).get("number") for x in patient_rows})
+        latest_case=compact_values((latest.get("procedures") or latest.get("diagnoses") or [])[:2]);roles=latest.get("roles",{})
         with grid[i%2]:
             with st.container(border=True):
                 av,body=st.columns([.75,4]);av.markdown(f'<div class="cv-avatar">{initials(p["name"])}</div>',unsafe_allow_html=True)
                 body.markdown(f"<strong>{escape(p['name'])}</strong><div class='cv-meta'>RM {escape(p.get('rm') or '—')} · {escape(p.get('hospital') or 'Hospital not parsed')}</div>",unsafe_allow_html=True)
-                st.markdown(f'<span class="cv-pill">{escape(p.get("sex") or "Sex —")}</span><span class="cv-pill">Google Drive</span>',unsafe_allow_html=True)
-                if p.get("drive_url"):st.link_button("OPEN PATIENT FOLDER  ↗",p["drive_url"],use_container_width=True)
+                chips=compact_values([p.get("sex"),f"{episode_count} episode(s)" if episode_count else "Drive archive",f"{len(patient_rows)} visit(s)" if patient_rows else None])
+                st.markdown("".join(f'<span class="cv-pill">{escape(x)}</span>' for x in chips),unsafe_allow_html=True)
+                show_optional_field("Latest case",latest_case);show_optional_field("Latest operator",roles.get("operator"))
+                if st.button("VIEW CASES  →",key=f"patient_{p['id']}",use_container_width=True):
+                    st.session_state.selected_patient_id=p["id"];st.rerun()
 
 def search():
     page_header("Clinical discovery","Search the archive","Find visits by patient, RM, diagnosis, procedure, DPJP, operator, or assistant operator.")
