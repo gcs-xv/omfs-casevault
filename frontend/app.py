@@ -8,6 +8,7 @@ import json
 import secrets
 import sqlite3
 import time
+from datetime import datetime
 from pathlib import Path
 import httpx
 import streamlit as st
@@ -16,7 +17,6 @@ from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
-from PIL import Image
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -27,14 +27,10 @@ except FileNotFoundError:
     _embedded_default="false"
 EMBEDDED_MODE=str(os.getenv("EMBEDDED_MODE",_embedded_default)).lower()=="true"
 if EMBEDDED_MODE:
-    from sqlalchemy import select
-    from backend.core.database import Base, SessionLocal, engine
-    from backend.models import Episode, Media, Patient, Visit
-    from backend.services.case_service import save_visit, search_cases
+    from backend.services.drive_catalog import patient_from_folder,search_catalog
     from backend.services.drive_service import DriveService
     from backend.services.soap_parser import parse_soap
-    from backend.utils.normalization import safe_name
-    Base.metadata.create_all(engine)
+    from backend.utils.normalization import normalize_rm,safe_name
 
 API=os.getenv("API_URL","http://127.0.0.1:8000")
 APP_URL="https://omfs-casevault-dj7trsufq6jykaeuddo7b4.streamlit.app/oauth2callback"
@@ -116,6 +112,63 @@ def current_credentials():
     if credentials and credentials.expired and credentials.refresh_token:credentials.refresh(GoogleRequest())
     return credentials
 
+def drive_service():
+    credentials=current_credentials()
+    if not credentials:raise ValueError("Silakan login dengan Google terlebih dahulu.")
+    return DriveService(credentials,setting("GOOGLE_DRIVE_ROOT_FOLDER_ID"))
+
+def drive_patients():
+    drive=drive_service()
+    return [patient_from_folder(x) for x in drive.list_folders(drive.root_id)]
+
+def int_to_roman(number:int)->str:
+    pairs=((1000,"M"),(900,"CM"),(500,"D"),(400,"CD"),(100,"C"),(90,"XC"),(50,"L"),(40,"XL"),(10,"X"),(9,"IX"),(5,"V"),(4,"IV"),(1,"I"));out=[]
+    for value,symbol in pairs:
+        while number>=value:out.append(symbol);number-=value
+    return "".join(out)
+
+def patient_folder_name(patient:dict)->str:
+    identity=" ".join(x for x in [patient.get("title"),patient.get("full_name")] if x).strip()
+    age=f"{patient.get('age')} {patient.get('age_unit') or 'Tahun'}" if patient.get("age") else None
+    parts=[identity,patient.get("sex"),age,patient.get("insurance"),patient.get("hospital"),f"RM {patient.get('medical_record_number')}"]
+    return " / ".join(str(x) for x in parts if x)
+
+def save_visit_to_drive(data:dict,photos:list)->dict:
+    drive=drive_service();patient=data["patient"];visit=data["visit"];episode=data["episode"]
+    rm=normalize_rm(patient.get("medical_record_number"))
+    if not rm:raise ValueError("Nomor RM wajib diisi.")
+    matches=[p for p in drive_patients() if p["rm_normalized"]==rm]
+    if matches:
+        patient_folder_id=matches[0]["id"];patient_drive_url=matches[0]["drive_url"]
+    else:
+        created=drive.create_folder(patient_folder_name(patient),drive.root_id);patient_folder_id=created.id;patient_drive_url=created.url
+    episode_number=int(episode["number"]);prefix=f"EP{episode_number:02d}"
+    episode_folders=drive.list_folders(patient_folder_id)
+    existing=next((x for x in episode_folders if x["name"].upper().startswith(prefix)),None)
+    if existing:
+        episode_folder_id=existing["id"]
+    else:
+        episode_folder_id=drive.create_folder(f"{prefix} - {episode['title'] or 'Clinical Episode'}",patient_folder_id).id
+    phase=visit["visit_phase"]
+    label=phase
+    if phase=="POD":
+        pod=int(visit.get("pod_number") or 0)
+        if pod<0:raise ValueError("Nomor POD tidak valid.")
+        roman=visit.get("pod_roman") or int_to_roman(pod)
+        label=f"POD {roman} ({pod})" if roman else "POD 0"
+    visit_folder=drive.create_folder(f"{visit['visit_date']} - {label}",episode_folder_id)
+    drive.upload_bytes("SOAP.txt",data["soap"]["original_soap"].encode("utf-8"),"text/plain",visit_folder.id)
+    roles={"dpjp":(data.get("dpjp") or {}).get("full_name"),"operator":data.get("operator"),"assistant_operators":data.get("assistant_operators",[])}
+    search_blob="\n".join(str(x) for x in [patient.get("full_name"),patient.get("medical_record_number"),*data.get("diagnoses",[]),*data.get("procedures",[]),roles["dpjp"],roles["operator"],*roles["assistant_operators"],data["soap"].get("assessment"),data["soap"].get("plan")] if x)
+    metadata={"schema_version":1,"casevault_root_id":drive.root_id,"patient":patient,"patient_folder_id":patient_folder_id,"patient_drive_url":patient_drive_url,"episode":episode,"episode_folder_id":episode_folder_id,"visit":visit,"visit_folder_id":visit_folder.id,"visit_drive_url":visit_folder.url,"diagnoses":data.get("diagnoses",[]),"procedures":data.get("procedures",[]),"roles":roles,"search_blob":search_blob,"saved_at":datetime.utcnow().isoformat()+"Z","saved_by":st.session_state.google_user["email"]}
+    drive.upload_bytes("casevault-metadata.json",json.dumps(metadata,ensure_ascii=False,indent=2).encode("utf-8"),"application/json",visit_folder.id,{"casevault_root":drive.root_id,"casevault_type":"visit_metadata"})
+    uploaded=[];failed=[]
+    for i,file in enumerate(photos,1):
+        try:
+            name=f"{i:03d}_{safe_name(file.name)}";drive.upload_bytes(name,file.getvalue(),file.type,visit_folder.id);uploaded.append(name)
+        except Exception as exc:failed.append({"file":file.name,"error":str(exc)})
+    return {"uploaded":uploaded,"failed":failed,"drive_url":visit_folder.url,"patient_drive_url":patient_drive_url,"save_state":"complete" if not failed else "partial_failure"}
+
 finish_google_login()
 restore_google_session()
 st.set_page_config(page_title="OMFS CaseVault",page_icon="🗂️",layout="wide",initial_sidebar_state="expanded")
@@ -145,43 +198,6 @@ def embedded_api(method,path,**kwargs):
     """Single-process demo adapter for Streamlit Community Cloud."""
     if path=="/health":return {"status":"ok","auth_configured":oauth_configured(),"drive_configured":drive_configured(),"signed_in":bool(st.session_state.get("google_user")),"mode":"Streamlit Cloud"}
     if path=="/parser/soap":return parse_soap(kwargs["json"]["soap"])
-    with SessionLocal() as db:
-        if path=="/patients":
-            rows=db.scalars(select(Patient).order_by(Patient.updated_at.desc()).limit(30)).all()
-            return [{"id":p.id,"name":p.full_name,"rm":p.medical_record_number,"sex":p.sex,"hospital":p.primary_hospital} for p in rows]
-        if path=="/search":
-            return [{"id":p.id,"name":p.full_name,"rm":p.medical_record_number,"hospital":p.primary_hospital} for p in search_cases(db,kwargs.get("params",{}).get("q",""))]
-        if method=="POST" and path=="/visits":
-            patient,episode,visit=save_visit(db,kwargs["json"],"streamlit-demo")
-            return {"patient_id":patient.id,"episode_id":episode.id,"visit_id":visit.id,"save_state":"demo_saved"}
-        if method=="POST" and path.endswith("/media"):
-            credentials=current_credentials()
-            if not credentials:raise ValueError("Silakan login dengan Google sebelum upload ke Drive.")
-            visit_id=path.split("/")[2];visit=db.get(Visit,visit_id)
-            if not visit:raise ValueError("Visit not found")
-            patient=db.get(Patient,visit.patient_id);episode=db.get(Episode,visit.episode_id)
-            drive=DriveService(credentials,setting("GOOGLE_DRIVE_ROOT_FOLDER_ID"))
-            if not patient.drive_folder_id:
-                x=drive.create_folder(f"{patient.medical_record_number} - {patient.full_name}",drive.root_id);patient.drive_folder_id=x.id;patient.drive_folder_url=x.url
-            if not episode.drive_folder_id:
-                x=drive.create_folder(f"{episode.episode_number} - {episode.title}",patient.drive_folder_id);episode.drive_folder_id=x.id;episode.drive_folder_url=x.url
-            if not visit.drive_folder_id:
-                pod=f"POD {visit.pod_roman} ({visit.pod_number})" if visit.pod_number is not None else visit.visit_type
-                x=drive.create_folder(f"{visit.visit_date.isoformat()} - {pod}",episode.drive_folder_id);visit.drive_folder_id=x.id;visit.drive_folder_url=x.url
-                drive.upload_bytes("SOAP.txt",visit.original_soap.encode(),"text/plain",visit.drive_folder_id)
-            uploaded=[];failed=[];start=len(visit.media)
-            for i,(_,file_tuple) in enumerate(kwargs.get("files",[]),start+1):
-                filename,data,mime=file_tuple
-                try:
-                    if mime not in {"image/jpeg","image/png","image/webp"}:raise ValueError("unsupported format")
-                    width,height=Image.open(io.BytesIO(data)).size
-                    ext={"image/jpeg":"jpg","image/png":"png","image/webp":"webp"}[mime];pod=f"POD{visit.pod_number:03d}" if visit.pod_number is not None else "VISIT"
-                    stored=f"{patient.medical_record_number_normalized}_{episode.episode_number}_{visit.visit_date.strftime('%Y%m%d')}_{pod}_{i:03d}.{ext}"
-                    item=drive.upload_bytes(stored,data,mime,visit.drive_folder_id)
-                    db.add(Media(visit_id=visit.id,drive_file_id=item.id,drive_url=item.url,original_filename=safe_name(filename),stored_filename=stored,mime_type=mime,file_size=len(data),width=width,height=height,sequence_number=i,uploaded_by=st.session_state.google_user["email"]));uploaded.append(stored)
-                except Exception as exc:failed.append({"file":filename,"error":str(exc)})
-            visit.save_state="complete" if not failed else "partial_failure";db.commit()
-            return {"uploaded":uploaded,"failed":failed,"save_state":visit.save_state,"drive_url":visit.drive_folder_url}
     raise ValueError(f"Unsupported embedded route: {method} {path}")
 
 def sidebar():
@@ -207,11 +223,19 @@ def preview(d):
         c1,c2=st.columns(2);p["age"]=c1.number_input("Age",0,150,p.get("age") or 0);p["insurance"]=c2.text_input("Insurance",p.get("insurance") or "")
         p["hospital"]=st.text_input("Hospital",p.get("hospital") or "")
     with b:
-        st.markdown("#### Visit")
+        st.markdown("#### Episode & visit")
+        episode=d.setdefault("episode",{})
+        c1,c2=st.columns(2);episode["number"]=c1.number_input("Episode number",1,999,int(episode.get("number") or 1));episode["title"]=c2.text_input("Episode title",episode.get("title") or ((d.get("diagnoses") or d.get("procedures") or ["Clinical Episode"])[0]))
         v["visit_date"]=st.text_input("Date (YYYY-MM-DD)",v.get("visit_date") or "")
-        c1,c2=st.columns(2);v["pod_roman"]=c1.text_input("POD Roman",v.get("pod_roman") or "");v["pod_number"]=c2.number_input("POD",0,1000,v.get("pod_number") or 0)
+        phases=["Terjaring","Pre-op","Intra-op","POD"];suggested=v.get("visit_phase") if v.get("visit_phase") in phases else "Terjaring"
+        v["visit_phase"]=st.selectbox("Visit stage",phases,index=phases.index(suggested),help="Pilih manual; CaseVault tidak akan menganggap kunjungan non-POD sebagai POD 0.")
+        if v["visit_phase"]=="POD":
+            c1,c2=st.columns(2);v["pod_number"]=c1.number_input("POD number",0,1000,int(v.get("pod_number") or 0));v["pod_roman"]=c2.text_input("POD Roman",v.get("pod_roman") or int_to_roman(int(v["pod_number"])))
+        else:v["pod_number"]=None;v["pod_roman"]=None
         d["diagnoses"]=st.text_area("Diagnosis · one per line","\n".join(d.get("diagnoses",[]))).splitlines()
         d["procedures"]=st.text_area("Procedures · one per line","\n".join(d.get("procedures",[]))).splitlines()
+        d["operator"]=st.text_input("Operator",d.get("operator") or "")
+        d["assistant_operators"]=st.text_area("Assistant operators · one per line","\n".join(d.get("assistant_operators",[]))).splitlines()
     if d["warnings"]:
         for w in d["warnings"]:st.warning(w)
     st.markdown("#### SOAP")
@@ -232,25 +256,44 @@ def quick_upload():
         photos=st.file_uploader("Clinical photos",type=["jpg","jpeg","png","webp"],accept_multiple_files=True,help="1–30 photos; upload begins only when you save")
         if photos:st.caption(f"{len(photos)} photo(s) ready · originals remain private in Google Drive")
         if st.button("SAVE VISIT",type="primary",use_container_width=True):
-            result=api("POST","/visits",json=st.session_state.parsed)
-            if result:
-                upload={"uploaded":[],"failed":[],"save_state":"uploading"}
-                if photos:
-                    files=[("files",(f.name,f.getvalue(),f.type)) for f in photos];upload=api("POST",f"/visits/{result['visit_id']}/media",files=files) or upload
-                st.session_state.saved={**result,**upload,"name":st.session_state.parsed["patient"]["full_name"],"rm":st.session_state.parsed["patient"]["medical_record_number"],"pod":st.session_state.parsed["visit"].get("pod_number")}
+            if EMBEDDED_MODE:
+                try:result=save_visit_to_drive(st.session_state.parsed,photos or [])
+                except Exception as exc:st.error(f"Drive save failed: {exc}");result=None
+            else:result=api("POST","/visits",json=st.session_state.parsed)
+            if result:st.session_state.saved={**result,"name":st.session_state.parsed["patient"]["full_name"],"rm":st.session_state.parsed["patient"]["medical_record_number"],"phase":st.session_state.parsed["visit"].get("visit_phase")}
     if "saved" in st.session_state:
-        x=st.session_state.saved;st.success(f"✓ VISIT SAVED — {x['name']} · RM {x['rm']} · POD {x['pod']} · {len(x.get('uploaded',[]))} photos uploaded")
+        x=st.session_state.saved;st.success(f"✓ SAVED TO DRIVE — {x['name']} · RM {x['rm']} · {x['phase']} · {len(x.get('uploaded',[]))} photos uploaded")
         if x.get("failed"):st.warning(f"{len(x['failed'])} photo(s) failed. Re-select only those files to retry.")
         if x.get("drive_url"):st.link_button("OPEN DRIVE FOLDER",x["drive_url"])
 
 def patients():
-    st.markdown("# Patients");rows=api("GET","/patients") or []
+    st.markdown("# Patients");st.caption("Live from Google Drive · refresh the page after changing folders in Drive")
+    if st.button("SYNC NOW",use_container_width=False):st.rerun()
+    try:rows=drive_patients() if EMBEDDED_MODE else (api("GET","/patients") or [])
+    except Exception as exc:st.error(f"Drive read failed: {exc}");return
+    q=st.text_input("Filter patients",placeholder="Name or RM")
+    if q:rows=[p for p in rows if q.casefold() in f"{p.get('folder_name','')} {p.get('rm','')}".casefold()]
+    st.caption(f"{len(rows)} patient folder(s)")
     for p in rows:
-        with st.container(border=True):st.markdown(f"**{p['name']}**  \nRM {p['rm']} · {p.get('sex') or '—'} · {p.get('hospital') or '—'}")
+        with st.container(border=True):
+            a,b=st.columns([4,1]);a.markdown(f"**{p['name']}**  \nRM {p.get('rm') or '—'} · {p.get('sex') or '—'} · {p.get('hospital') or '—'}")
+            if p.get("drive_url"):b.link_button("OPEN DRIVE",p["drive_url"],use_container_width=True)
 
 def search():
-    st.markdown("# Search");q=st.text_input("Name, RM, diagnosis, or procedure")
-    if q:
+    st.markdown("# Search");q=st.text_input("Patient, RM, diagnosis, procedure, DPJP, operator, or assistant operator")
+    if q and EMBEDDED_MODE:
+        try:
+            drive=drive_service();patient_rows=drive_patients();rows=search_catalog(patient_rows,drive.list_visit_metadata(),q)
+            for row in rows:
+                patient=row.get("patient",{});roles=row.get("roles",{})
+                with st.container(border=True):
+                    st.markdown(f"**{patient.get('full_name') or patient.get('name') or 'Patient folder'}**  \nRM {patient.get('medical_record_number') or patient.get('rm') or '—'} · {row.get('visit',{}).get('visit_phase','Legacy Drive folder')}")
+                    if not row.get("legacy"):st.caption(" · ".join(x for x in [roles.get("dpjp"),roles.get("operator"),", ".join(roles.get("assistant_operators",[]))] if x))
+                    url=row.get("visit_drive_url") or row.get("patient_drive_url")
+                    if url:st.link_button("OPEN DRIVE",url)
+            if not rows:st.info("No matching Drive metadata. Legacy folders without SOAP metadata can only be searched by patient folder name or RM.")
+        except Exception as exc:st.error(f"Drive search failed: {exc}")
+    elif q:
         for p in api("GET","/search",params={"q":q}) or []:st.markdown(f'<div class="cv-card"><b>{p["name"]}</b><br><span class="muted">RM {p["rm"]} · {p.get("hospital") or "—"}</span></div>',unsafe_allow_html=True)
 
 def settings_page():
