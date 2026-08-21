@@ -34,7 +34,6 @@ if EMBEDDED_MODE:
         drive_catalog=reload(drive_catalog)
     match_patient=drive_catalog.match_patient
     patient_from_folder=drive_catalog.patient_from_folder
-    search_catalog=drive_catalog.search_catalog
     from backend.services.drive_service import DriveService
     from backend.services.soap_parser import parse_soap
     from backend.utils import normalization as normalization_utils
@@ -416,7 +415,9 @@ def embedded_api(method,path,**kwargs):
 
 def sidebar():
     st.sidebar.markdown('<div class="cv-brand"><div class="cv-logo">OM</div><div><strong>CaseVault</strong><span>OMFS Surgical Atlas</span></div></div>',unsafe_allow_html=True)
-    page=st.sidebar.radio("Navigation",["＋  Case intake","◫  Case registry","⌕  Atlas index","⚙  Archive control"],label_visibility="collapsed",key="nav_page")
+    navigation=["＋  Case intake","◫  Case registry","⚙  Archive control"]
+    if st.session_state.get("nav_page") not in navigation:st.session_state.nav_page="◫  Case registry"
+    page=st.sidebar.radio("Navigation",navigation,label_visibility="collapsed",key="nav_page")
     st.sidebar.markdown("---")
     health=api("GET","/health")
     if health:
@@ -628,15 +629,26 @@ def patients():
         patient=next((p for p in rows if p.get("id")==selected),None)
         if patient:patient_detail(patient,metadata_rows);return
         st.session_state.pop("selected_patient_id",None)
-    page_header("Case registry · Master index","Surgical dossiers","Browse the living archive by patient, then open a dossier to trace every episode and operative visit.")
-    search_col,sync_col=st.columns([5,1]);q=search_col.text_input("Filter patients",placeholder="Search name or medical record number…",label_visibility="collapsed")
+    page_header("Case registry · Master index","Surgical dossiers","Search the complete clinical index, then open any patient dossier to review every episode, SOAP report, and image.")
+    search_col,sync_col=st.columns([5,1]);q=search_col.text_input("Search cases",placeholder="Search patient, RM, diagnosis, procedure, DPJP, operator, or assistant…",label_visibility="collapsed")
     if sync_col.button("↻  SYNC",use_container_width=True):clear_drive_cache();st.rerun()
-    if q:rows=[p for p in rows if q.casefold() in f"{p.get('folder_name','')} {p.get('rm','')}".casefold()]
-    st.markdown(f'<div class="cv-section-sub">{len(rows)} Drive patient folder(s) · synced just now</div>',unsafe_allow_html=True)
-    if not rows:st.markdown('<div class="cv-empty"><div class="icon">◫</div><b>No patient folders found</b><br>Try another search or sync Drive again.</div>',unsafe_allow_html=True);return
+    patient_rows_map={p.get("id"):patient_metadata(metadata_rows,p) for p in rows}
+    if q:
+        terms=[term for term in re.split(r"\s+",q.casefold().strip()) if term]
+        rm_query=normalize_rm(q) if any(char.isdigit() for char in q) else ""
+        def matches(patient):
+            indexed=patient_rows_map.get(patient.get("id"),[]);parts=[patient.get("folder_name"),patient.get("name"),patient.get("rm"),patient.get("rm_normalized"),patient.get("hospital"),patient.get("insurance")]
+            for row in indexed:
+                roles=row.get("roles",{});parts.extend([row.get("search_blob"),*(row.get("diagnoses") or []),*(row.get("procedures") or []),roles.get("dpjp"),roles.get("operator"),*(roles.get("assistant_operators") or []),(row.get("episode") or {}).get("title"),(row.get("soap") or {}).get("assessment")])
+            blob=" ".join(str(value) for value in parts if value).casefold()
+            return all(term in blob for term in terms) or bool(rm_query and rm_query in normalize_rm(patient.get("rm")))
+        rows=[patient for patient in rows if matches(patient)]
+    search_label=f' · results for “{escape(q)}”' if q else ""
+    st.markdown(f'<div class="cv-section-sub">{len(rows)} patient dossier(s){search_label} · searchable clinical index</div>',unsafe_allow_html=True)
+    if not rows:st.markdown('<div class="cv-empty"><div class="icon">⌕</div><b>No matching dossiers</b><br>Try a patient name, RM, diagnosis, procedure, DPJP, operator, or assistant.</div>',unsafe_allow_html=True);return
     grid=st.columns(2,gap="medium")
     for i,p in enumerate(sorted(rows,key=lambda x:x.get("name","").casefold())):
-        patient_rows=patient_metadata(metadata_rows,p);latest=patient_rows[0] if patient_rows else {};episode_count=len({x.get("episode_folder_id") or (x.get("episode") or {}).get("number") for x in patient_rows})
+        patient_rows=patient_rows_map.get(p.get("id"),[]);latest=patient_rows[0] if patient_rows else {};episode_count=len({x.get("episode_folder_id") or (x.get("episode") or {}).get("number") for x in patient_rows})
         latest_case=compact_values((latest.get("procedures") or latest.get("diagnoses") or [])[:2]);roles=latest.get("roles",{})
         with grid[i%2]:
             with st.container(border=True):
@@ -648,30 +660,6 @@ def patients():
                 show_optional_field("Latest case",latest_case);show_optional_field("Latest operator",roles.get("operator"))
                 if st.button("VIEW CASES  →",key=f"patient_{p['id']}",use_container_width=True):
                     st.session_state.selected_patient_id=p["id"];st.rerun()
-
-def search():
-    page_header("Atlas index · Cross-reference","Search the case archive","Cross-reference patients, medical record numbers, diagnoses, procedures, DPJP, operators, and assistants.")
-    q=st.text_input("Search",placeholder="Try: odontektomi, an operator name, DPJP, diagnosis, or RM…",label_visibility="collapsed")
-    if not q:
-        st.markdown('<div class="cv-empty"><div class="icon">⌕</div><b>Search across structured Drive metadata</b><br>New CaseVault uploads are indexed by clinical and care-team fields.</div>',unsafe_allow_html=True);return
-    if q and EMBEDDED_MODE:
-        try:
-            with st.spinner("Searching Drive metadata…"):drive=drive_service();patient_rows=drive_patients();rows=search_catalog(patient_rows,list_drive_visit_metadata(drive,drive.root_id),q)
-            st.caption(f"{len(rows)} result(s) for “{q}”")
-            for row in rows:
-                patient=row.get("patient",{});roles=row.get("roles",{})
-                with st.container(border=True):
-                    patient_name=escape(patient.get('full_name') or patient.get('name') or 'Patient folder');rm=escape(patient.get('medical_record_number') or patient.get('rm') or '—');phase=escape(row.get('visit',{}).get('visit_phase','Legacy Drive folder'))
-                    a,b=st.columns([4,1]);a.markdown(f"<strong>{patient_name}</strong><div class='cv-meta'>RM {rm} · {phase}</div>",unsafe_allow_html=True)
-                    if not row.get("legacy"):
-                        labels=[f"DPJP · {roles['dpjp']}" if roles.get("dpjp") else None,f"Operator · {roles['operator']}" if roles.get("operator") else None]
-                        a.markdown("".join(f'<span class="cv-pill">{escape(x)}</span>' for x in labels if x),unsafe_allow_html=True)
-                    url=row.get("visit_drive_url") or row.get("patient_drive_url")
-                    drive_icon_link(url,"Open search result in Google Drive")
-            if not rows:st.info("No matching Drive metadata. Legacy folders without SOAP metadata can only be searched by patient folder name or RM.")
-        except Exception as exc:st.error(f"Drive search failed: {exc}")
-    elif q:
-        for p in api("GET","/search",params={"q":q}) or []:st.markdown(f'<div class="cv-card"><b>{p["name"]}</b><br><span class="muted">RM {p["rm"]} · {p.get("hospital") or "—"}</span></div>',unsafe_allow_html=True)
 
 def settings_page():
     page_header("Archive control · System plate","Settings & connection","Review the active CaseVault identity, source-of-truth Drive, and the archive privacy boundary.")
@@ -709,4 +697,4 @@ page=sidebar()
 if EMBEDDED_MODE and not st.session_state.get("app_user"):
     login_screen()
 else:
-    {"＋  Case intake":quick_upload,"◫  Case registry":patients,"⌕  Atlas index":search,"⚙  Archive control":settings_page}[page]()
+    {"＋  Case intake":quick_upload,"◫  Case registry":patients,"⚙  Archive control":settings_page}[page]()
